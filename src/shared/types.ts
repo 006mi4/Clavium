@@ -128,6 +128,26 @@ export interface TransferProgress {
   cancelled?: boolean
 }
 
+/** A GNU screen session of the logged-in user on a server. */
+export interface ScreenInfo {
+  /** "1234.minecraft" */
+  id: string
+  name: string
+  /** someone is attached to it right now */
+  attached: boolean
+  /** when it was started, as the server prints it */
+  started?: string
+}
+
+export interface ScreenList {
+  /** false when screen is not installed on the server */
+  installed: boolean
+  screens: ScreenInfo[]
+}
+
+/** What a terminal tab shows instead of a plain shell. */
+export type ScreenTarget = { attach: string } | { create: string }
+
 export interface MovePair {
   from: string
   to: string

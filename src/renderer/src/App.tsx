@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowDownCircle, ArrowLeftRight, FolderOpen, History, KeyRound, Lock, Server, Settings, ShieldCheck, Sparkles, SquareTerminal, X } from 'lucide-react'
-import type { ActiveForward, EditorFileInfo, EditorRequest, HostSummary, SshKeySummary, UpdateState, VaultState } from '@shared/types'
+import { ArrowDownCircle, ArrowLeftRight, FolderOpen, History, KeyRound, Layers, Lock, Server, Settings, ShieldCheck, Sparkles, SquareTerminal, X } from 'lucide-react'
+import type { ActiveForward, EditorFileInfo, EditorRequest, HostSummary, ScreenTarget, SshKeySummary, UpdateState, VaultState } from '@shared/types'
 import { api, on, type UiSettings } from './api'
 import { FilesView } from './components/FilesView'
 import { editorSessions } from './editor/registry'
@@ -20,6 +20,8 @@ interface Session {
   kind: 'terminal' | 'files'
   host: HostSummary
   state: ConnState
+  /** a terminal that shows a screen of the server instead of a shell */
+  screen?: { target: ScreenTarget; name: string }
   /** files with unsaved changes in this session's editor */
   unsaved: number
 }
@@ -77,9 +79,9 @@ export function App() {
     setPage(p)
     setActive('page')
   }
-  const open = (kind: Session['kind'], host: HostSummary, show = true): void => {
+  const open = (kind: Session['kind'], host: HostSummary, show = true, screen?: Session['screen']): void => {
     const id = `${kind}-${host.id}-${Date.now()}`
-    setSessions((s) => [...s, { id, kind, host, state: 'connecting', unsaved: 0 }])
+    setSessions((s) => [...s, { id, kind, host, state: 'connecting', unsaved: 0, screen }])
     if (show) setActive(id)
   }
 
@@ -206,13 +208,13 @@ export function App() {
                   role="button"
                   tabIndex={0}
                   className={`side-item ${active === s.id ? 'active' : ''}`}
-                  title={`${s.kind === 'terminal' ? 'Terminal' : 'Files'}: ${s.host.username}@${s.host.hostname}`}
+                  title={`${s.screen ? `Screen “${s.screen.name}”` : s.kind === 'terminal' ? 'Terminal' : 'Files'}: ${s.host.username}@${s.host.hostname}`}
                   onClick={() => setActive(s.id)}
                   onKeyDown={(e) => e.key === 'Enter' && setActive(s.id)}
                   onAuxClick={(e) => e.button === 1 && void close(s.id)}
                 >
-                  <span className="glyph">{s.kind === 'terminal' ? <SquareTerminal size={16} /> : <FolderOpen size={16} />}</span>
-                  <span className="label">{s.host.name}</span>
+                  <span className="glyph">{s.screen ? <Layers size={16} /> : s.kind === 'terminal' ? <SquareTerminal size={16} /> : <FolderOpen size={16} />}</span>
+                  <span className="label">{s.screen ? `${s.screen.name} · ${s.host.name}` : s.host.name}</span>
                   <span className="trail hide-on-hover">
                     <StatusDot state={s.state} />
                   </span>
@@ -318,7 +320,9 @@ export function App() {
                 active={active === s.id}
                 fontSize={settings.terminalFontSize}
                 onState={(st) => setSessionState(s.id, st)}
+                screen={s.screen}
                 onOpenFiles={() => open('files', s.host)}
+                onOpenScreen={(screen) => open('terminal', s.host, true, screen)}
                 onClose={() => void close(s.id)}
               />
             ) : (

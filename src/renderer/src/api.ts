@@ -13,6 +13,8 @@ import type {
   MoveResult,
   PromptResponse,
   RemoteEntry,
+  ScreenList,
+  ScreenTarget,
   SshKeySummary,
   TextFile,
   TextFileVersion,
@@ -78,7 +80,9 @@ export const api = {
     snippets: () => call<McpSnippets>('mcp:snippets')
   },
   term: {
-    open: (hostId: string, cols: number, rows: number) => call<string>('term:open', hostId, cols, rows),
+    open: (hostId: string, cols: number, rows: number, screen?: ScreenTarget) => call<string>('term:open', hostId, cols, rows, screen),
+    screens: (id: string) => call<ScreenList>('term:screens', id),
+    endScreen: (id: string, screenId: string) => call<void>('term:endScreen', id, screenId),
     write: (id: string, data: string) => call<void>('term:write', id, data),
     resize: (id: string, cols: number, rows: number) => call<void>('term:resize', id, cols, rows),
     close: (id: string) => call<void>('term:close', id)

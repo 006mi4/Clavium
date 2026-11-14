@@ -24,6 +24,10 @@
 
 - **SSH terminal** with tabs (xterm.js, 256 colours, copy/paste, resize), password, key, SSH agent
   (Windows OpenSSH agent / Pageant) and keyboard-interactive / 2FA logins
+- **Screens made simple** (GNU screen): the terminal shows which screens are running under your user. One
+  click opens a screen in its own tab, with what it printed so far in the scrollback, so the mouse wheel just
+  works. The keyboard goes straight to the program inside, e.g. the console of a game server. Closing the tab
+  only detaches (like Ctrl+A, D); the program keeps running. Ending a screen is a separate button that asks first.
 - **File manager for SFTP and FTP(S)** that works the way Explorer does:
   - drag files and whole folders from Windows into the window to upload them, onto a folder to upload into it
   - drag files and folders out of the window onto the desktop or into an Explorer window to download them
@@ -252,6 +256,8 @@ cd Clavium
 npm ci
 npm run dev        # start in development mode
 npm test           # unit + integration tests (local SSH/SFTP test server, MCP, bridge)
+# optional, needs a server with GNU screen and key login:
+#   CLAVIUM_SCREEN_TEST=user@host:22 CLAVIUM_SCREEN_KEY=~/.ssh/id_ed25519 npx vitest run -c vitest.e2e.config.mts tests/e2e/screen.e2e.ts
 npm run test:e2e   # drives the real Electron app with Playwright
 npm run dist       # build dist/Clavium-Setup-x.y.z.exe and dist/Clavium-x.y.z-portable.exe
 ```

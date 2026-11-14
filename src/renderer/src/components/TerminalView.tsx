@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { FolderOpen, RotateCw, X } from 'lucide-react'
-import type { HostSummary } from '@shared/types'
+import { FolderOpen, Layers, Plus, Power, RotateCw, X } from 'lucide-react'
+import type { HostSummary, ScreenList, ScreenTarget } from '@shared/types'
 import { api, on } from '../api'
-import { IconButton, Toolbar, useDarkMode } from '../ui'
+import { IconButton, Sheet, Toolbar, useConfirm, useDarkMode, useMenu, useToast, type MenuItem } from '../ui'
 
 export type ConnState = 'connecting' | 'connected' | 'closed' | 'error'
 
@@ -73,9 +73,18 @@ export function TerminalView(props: {
   active: boolean
   fontSize: number
   onState: (s: ConnState) => void
+  /** set when this tab shows a screen of the server instead of a shell */
+  screen?: { target: ScreenTarget; name: string }
   onOpenFiles: () => void
+  onOpenScreen: (screen: { target: ScreenTarget; name: string }) => void
   onClose: () => void
 }) {
+  const toast = useToast()
+  const confirm = useConfirm()
+  const menu = useMenu()
+  /** screens of the logged-in user; null until the server has answered */
+  const [screens, setScreens] = useState<ScreenList | null>(null)
+  const [naming, setNaming] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -112,6 +121,8 @@ export function TerminalView(props: {
     const fitAddon = new FitAddon()
     term.loadAddon(fitAddon)
     term.open(ref.current as HTMLDivElement)
+    // lets the end-to-end tests read the scrollback
+    ;(ref.current as HTMLDivElement & { term?: Terminal }).term = term
     termRef.current = term
     fitRef.current = fitAddon
 
@@ -184,15 +195,23 @@ export function TerminalView(props: {
     update('connecting')
     fit()
     api.term
-      .open(props.host.id, Math.max(term.cols, 20), Math.max(term.rows, 5))
+      .open(props.host.id, Math.max(term.cols, 20), Math.max(term.rows, 5), props.screen?.target)
       .then((id) => {
         if (cancelled) {
           void api.term.close(id)
           return
         }
+        if (props.screen) term.reset() // a reconnect brings the history again
         sessionRef.current = id
         update('connected')
         term.focus()
+        // Look for screens quietly; a server without screen simply shows no button.
+        if (props.host.protocol === 'ssh') {
+          api.term
+            .screens(id)
+            .then((list) => !cancelled && setScreens(list))
+            .catch(() => undefined)
+        }
       })
       .catch((e: Error) => {
         if (!cancelled) update('error', e.message)
@@ -220,24 +239,79 @@ export function TerminalView(props: {
     }
   }, [props.active])
 
+  const openScreensMenu = async (e: React.MouseEvent<HTMLElement>): Promise<void> => {
+    const anchor = e.currentTarget.getBoundingClientRect()
+    let list = screens
+    try {
+      // ask again: screens come and go while the terminal is open
+      if (sessionRef.current) list = await api.term.screens(sessionRef.current)
+      setScreens(list)
+    } catch {
+      /* show what is known */
+    }
+    const items: MenuItem[] = (list?.screens ?? []).map((s) => ({
+      label: s.name,
+      icon: Layers,
+      hint: s.attached ? 'in use' : s.started,
+      onSelect: () => props.onOpenScreen({ target: { attach: s.id }, name: s.name })
+    }))
+    if (items.length) items.push('separator')
+    items.push({ label: 'New Screen…', icon: Plus, onSelect: () => setNaming(true) })
+    menu.openBelow({ currentTarget: { getBoundingClientRect: () => anchor } } as React.MouseEvent<HTMLElement>, items)
+  }
+  const endScreen = async (): Promise<void> => {
+    const target = props.screen?.target
+    if (!target || !sessionRef.current) return
+    const ok = await confirm({
+      title: `End the Screen “${props.screen?.name}”?`,
+      message: 'The program running in it is stopped. To leave it running, just close this tab instead.',
+      confirmLabel: 'End Screen',
+      destructive: true
+    })
+    if (!ok) return
+    try {
+      const list = await api.term.screens(sessionRef.current)
+      const id = 'attach' in target ? target.attach : list.screens.find((s) => s.name === target.create)?.id
+      if (id) await api.term.endScreen(sessionRef.current, id)
+    } catch (e) {
+      toast.error(e)
+    }
+  }
+  const count = screens?.screens.length ?? 0
+
   return (
     <>
       <Toolbar
-        title={props.host.name}
+        title={props.screen ? props.screen.name : props.host.name}
         subtitle={
           <>
             <StatusDot state={state} />
-            {STATE_TEXT[state]}
+            {props.screen && state === 'connected' ? 'Screen' : STATE_TEXT[state]}
             <span className="mono" style={{ marginLeft: 6 }}>
               {props.host.username}@{props.host.hostname}
             </span>
+            {props.screen && state === 'connected' && <span style={{ marginLeft: 8 }}>· keeps running when you close this tab</span>}
           </>
         }
       >
         {state !== 'connecting' && state !== 'connected' && <IconButton icon={RotateCw} label="Reconnect" onClick={() => setAttempt((a) => a + 1)} />}
+        {!props.screen && screens?.installed && state === 'connected' && (
+          <button className="btn" title="Programs that keep running on the server (GNU screen)" onClick={(e) => void openScreensMenu(e)}>
+            <Layers size={14} /> Screens{count ? ` · ${count}` : ''}
+          </button>
+        )}
+        {props.screen && state === 'connected' && <IconButton icon={Power} label="End Screen…" onClick={() => void endScreen()} />}
         <IconButton icon={FolderOpen} label="Browse Files" onClick={props.onOpenFiles} />
-        <IconButton icon={X} label="Close Session" onClick={props.onClose} />
+        <IconButton icon={X} label={props.screen ? 'Close Tab (the screen keeps running)' : 'Close Session'} onClick={props.onClose} />
       </Toolbar>
+      {menu.element}
+      {naming && (
+        <NewScreenSheet
+          close={() => setNaming(false)}
+          create={(name) => props.onOpenScreen({ target: { create: name }, name })}
+          taken={(screens?.screens ?? []).map((s) => s.name)}
+        />
+      )}
       <div className="view-fixed">
         <div className="term-wrap" style={{ ['--term-bg' as string]: dark ? DARK.background : LIGHT.background }}>
           <div ref={ref} style={{ height: '100%' }} />
@@ -266,5 +340,44 @@ export function TerminalView(props: {
         </div>
       </div>
     </>
+  )
+}
+
+function NewScreenSheet(props: { close: () => void; create: (name: string) => void; taken: string[] }) {
+  const [name, setName] = useState('')
+  const valid = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(name)
+  const submit = (): void => {
+    if (!valid) return
+    props.close()
+    props.create(name)
+  }
+  return (
+    <Sheet
+      size="narrow"
+      title="New Screen"
+      onClose={props.close}
+      footer={
+        <>
+          <button className="btn" onClick={props.close}>
+            Cancel
+          </button>
+          <button className="btn prominent" onClick={submit} disabled={!valid}>
+            {props.taken.includes(name) ? 'Open' : 'Create'}
+          </button>
+        </>
+      }
+    >
+      <p>Whatever you start in a screen keeps running on the server after you close the tab, for example a game server.</p>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          submit()
+        }}
+      >
+        <input className="field" aria-label="Name of the screen" placeholder="e.g. minecraft" autoFocus spellCheck={false} value={name} onChange={(e) => setName(e.target.value.trim())} />
+      </form>
+      {name && !valid && <p>Use letters, digits, dots, dashes and underscores.</p>}
+      {props.taken.includes(name) && <p>A screen with this name is already running. It will be opened.</p>}
+    </Sheet>
   )
 }

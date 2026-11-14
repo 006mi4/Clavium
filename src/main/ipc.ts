@@ -257,7 +257,11 @@ export function registerIpc(ctx: IpcContext): void {
   // terminals
   const cols = z.number().int().min(2).max(1000)
   const rows = z.number().int().min(2).max(500)
-  handle('term:open', z.tuple([id, cols, rows]), (hostId, c, r) => ctx.terminals.open(host(hostId), c, r))
+  const screenId = z.string().min(3).max(200).regex(/^\d+\.[^\r\n\0\t]+$/)
+  const screenTarget = z.union([z.object({ attach: screenId }).strict(), z.object({ create: z.string().min(1).max(40) }).strict()])
+  handle('term:open', z.tuple([id, cols, rows, screenTarget.optional()]), (hostId, c, r, screen) => ctx.terminals.open(host(hostId), c, r, screen))
+  handle('term:screens', z.tuple([id]), (sid) => ctx.terminals.screens(sid))
+  handle('term:endScreen', z.tuple([id, screenId]), (sid, screen) => ctx.terminals.endScreen(sid, screen))
   handle('term:write', z.tuple([id, z.string().max(1024 * 1024)]), (sid, data) => ctx.terminals.write(sid, data))
   handle('term:resize', z.tuple([id, cols, rows]), (sid, c, r) => ctx.terminals.resize(sid, c, r))
   handle('term:close', z.tuple([id]), (sid) => ctx.terminals.close(sid))

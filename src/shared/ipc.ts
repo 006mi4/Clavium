@@ -28,6 +28,8 @@ export const INVOKE_CHANNELS = [
   'term:write',
   'term:resize',
   'term:close',
+  'term:screens',
+  'term:endScreen',
   'files:open',
   'files:home',
   'files:list',

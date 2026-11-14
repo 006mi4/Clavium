@@ -50,6 +50,17 @@ Non-secret preferences live in `settings.json`; the AI activity log in `audit.lo
 - File names received from a server are sanitised before writing to the local disk (no path traversal,
   no reserved Windows names).
 
+### Screens
+
+- Listing screens runs `screen -ls` on the server and changes nothing.
+- A screen is attached with `screen -x` directly on the connection, without a shell in between. Closing the
+  tab closes that connection, and screen detaches by itself. Clavium only ends a screen when the user presses
+  "End Screen" and confirms.
+- Only screens that the server itself lists are attached or ended, and their names are quoted for the shell.
+  Names for new screens are limited to letters, digits, dots, dashes and underscores.
+- To show earlier output, screen writes it to a file created with `mktemp` on the server (readable by the
+  user only), which is read and deleted right away. The screen's history is raised to 5000 lines.
+
 ### File transfers, drag and drop, clipboard
 
 - Moving and copying on the server never replaces an existing item; an upload that would replace something
