@@ -2,7 +2,7 @@
 // stdio bridge and locking. Run with `npm run test:e2e` (builds first).
 // It also regenerates the screenshots in docs/screenshots (light, plus a few dark ones).
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -416,7 +416,9 @@ describe('Clavium desktop app', () => {
         onClipboard = (await readClipboardFiles()).filter((f) => f.endsWith('docker-compose.yml'))
       }
       expect(onClipboard).toHaveLength(1)
-      expect(onClipboard[0].startsWith(join(dataDir, 'transfer-tmp'))).toBe(true)
+      // compared in one spelling: the temp folder of a CI runner comes in its short form (RUNNER~1)
+      const spelled = (p: string): string => realpathSync.native(p).toLowerCase()
+      expect(spelled(onClipboard[0]).startsWith(spelled(join(dataDir, 'transfer-tmp')))).toBe(true)
       expect(readFileSync(onClipboard[0], 'utf8')).toBe(readFileSync(join(srv.root, 'docker-compose.yml'), 'utf8'))
     }
     await view().getByRole('button', { name: 'Clear Finished' }).click().catch(() => undefined)

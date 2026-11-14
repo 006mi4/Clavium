@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
 import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, extname, join, posix, resolve, sep } from 'node:path'
@@ -26,8 +26,17 @@ export function safeLocalName(remoteName: string): string {
   return name.slice(0, 200)
 }
 
+/** One spelling per path: Windows may hand out the short form (RUNNER~1) of a folder name. */
+function canonical(path: string): string {
+  try {
+    return realpathSync.native(path).toLowerCase()
+  } catch {
+    return resolve(path).toLowerCase()
+  }
+}
+
 function isWithin(dir: string, path: string): boolean {
-  return resolve(path).toLowerCase().startsWith(resolve(dir).toLowerCase() + sep)
+  return canonical(path).startsWith(canonical(dir) + sep)
 }
 
 function uniqueLocalPath(dir: string, name: string): string {
