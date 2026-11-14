@@ -1,193 +1,262 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { HostSummary, SshKeySummary, VaultState } from '@shared/types'
+import { ArrowLeftRight, FolderOpen, History, KeyRound, Lock, Server, Settings, ShieldCheck, Sparkles, SquareTerminal, X } from 'lucide-react'
+import type { ActiveForward, HostSummary, SshKeySummary, VaultState } from '@shared/types'
 import { api, on, type UiSettings } from './api'
 import { FilesView } from './components/FilesView'
 import { HostsPage } from './components/HostsPage'
 import { LockScreen } from './components/LockScreen'
 import { Logo } from './components/Logo'
 import { McpPage } from './components/McpPage'
-import { ActivityPage, ForwardsPage, KeysPage, KnownHostsPage, SettingsPage } from './components/Pages'
+import { ActivityPage, KeysPage, KnownHostsPage, SettingsPage } from './components/Pages'
 import { PromptHost } from './components/PromptHost'
-import { TerminalView, type ConnState } from './components/TerminalView'
-import { Icon, useToast } from './ui'
+import { StatusDot, TerminalView, type ConnState } from './components/TerminalView'
+import { IconButton, useToast, type IconType } from './ui'
 
-type Page = 'hosts' | 'keys' | 'known' | 'forwards' | 'mcp' | 'activity' | 'settings'
+type Page = 'hosts' | 'keys' | 'known' | 'ai' | 'activity' | 'settings'
 
-interface SessionTab {
+interface Session {
   id: string
   kind: 'terminal' | 'files'
   host: HostSummary
   state: ConnState
 }
 
-const NAV: { page: Page; label: string; icon: string }[] = [
-  { page: 'hosts', label: 'Hosts', icon: 'server' },
-  { page: 'keys', label: 'Keychain', icon: 'key' },
-  { page: 'known', label: 'Known hosts', icon: 'shield' },
-  { page: 'forwards', label: 'Port forwarding', icon: 'forward' },
-  { page: 'mcp', label: 'AI / MCP', icon: 'ai' },
-  { page: 'activity', label: 'Activity', icon: 'list' },
-  { page: 'settings', label: 'Settings', icon: 'gear' }
+const LIBRARY: { page: Page; label: string; icon: IconType; tile: string }[] = [
+  { page: 'hosts', label: 'Hosts', icon: Server, tile: 'blue' },
+  { page: 'keys', label: 'Keys', icon: KeyRound, tile: 'amber' },
+  { page: 'known', label: 'Known Hosts', icon: ShieldCheck, tile: 'green' }
 ]
 
 export function App() {
   const toast = useToast()
   const [vault, setVault] = useState<VaultState | null>(null)
   const [page, setPage] = useState<Page>('hosts')
-  const [active, setActive] = useState<string>('home')
-  const [tabs, setTabs] = useState<SessionTab[]>([])
+  /** 'page' shows the library page, otherwise the id of the visible session */
+  const [active, setActive] = useState<string>('page')
+  const [sessions, setSessions] = useState<Session[]>([])
   const [hosts, setHosts] = useState<HostSummary[]>([])
   const [keys, setKeys] = useState<SshKeySummary[]>([])
+  const [tunnels, setTunnels] = useState<ActiveForward[]>([])
   const [settings, setSettings] = useState<UiSettings | null>(null)
+  const [selectedHost, setSelectedHost] = useState<string | null>(null)
+  const [newHostSignal, setNewHostSignal] = useState(0)
 
   const reloadHosts = useCallback(() => void api.hosts.list().then(setHosts, toast.error), [])
   const reloadKeys = useCallback(() => void api.keys.list().then(setKeys, toast.error), [])
+  const reloadTunnels = useCallback(() => void api.fwd.list().then(setTunnels, () => undefined), [])
 
   useEffect(() => {
     void api.vault.state().then(setVault)
     void api.settings.get().then(setSettings)
-    const offVault = on('vault:changed', (s: VaultState) => setVault(s))
-    const offSettings = on('settings:changed', (s: UiSettings) => setSettings(s))
-    return () => {
-      offVault()
-      offSettings()
-    }
+    const offs = [
+      on('vault:changed', (s: VaultState) => setVault(s)),
+      on('settings:changed', (s: UiSettings) => setSettings(s)),
+      on('fwd:changed', reloadTunnels)
+    ]
+    return () => offs.forEach((off) => off())
   }, [])
 
   useEffect(() => {
     if (vault === 'unlocked') {
       reloadHosts()
       reloadKeys()
+      reloadTunnels()
+    } else {
+      setTunnels([])
     }
   }, [vault])
 
-  const openTab = (kind: SessionTab['kind'], host: HostSummary): void => {
+  const go = (p: Page): void => {
+    setPage(p)
+    setActive('page')
+  }
+  const open = (kind: Session['kind'], host: HostSummary): void => {
     const id = `${kind}-${host.id}-${Date.now()}`
-    setTabs((t) => [...t, { id, kind, host, state: 'connecting' }])
+    setSessions((s) => [...s, { id, kind, host, state: 'connecting' }])
     setActive(id)
   }
-  const closeTab = (id: string): void => {
-    setTabs((t) => {
-      const idx = t.findIndex((x) => x.id === id)
-      const next = t.filter((x) => x.id !== id)
-      if (active === id) setActive(next[Math.max(0, idx - 1)]?.id ?? 'home')
+  const close = (id: string): void => {
+    setSessions((list) => {
+      const idx = list.findIndex((x) => x.id === id)
+      const next = list.filter((x) => x.id !== id)
+      setActive((cur) => (cur === id ? (next[Math.min(idx, next.length - 1)]?.id ?? 'page') : cur))
       return next
     })
   }
-  const setTabState = (id: string, state: ConnState): void =>
-    setTabs((t) => t.map((x) => (x.id === id && x.state !== state ? { ...x, state } : x)))
+  const setSessionState = (id: string, state: ConnState): void =>
+    setSessions((list) => list.map((x) => (x.id === id && x.state !== state ? { ...x, state } : x)))
 
-  // Ctrl+Tab / Ctrl+W
+  // keyboard shortcuts
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.ctrlKey && e.key === 'Tab') {
+      if (!e.ctrlKey || vault !== 'unlocked') return
+      const inTerminal = (e.target as HTMLElement | null)?.closest?.('.xterm') != null
+      const key = e.key.toLowerCase()
+      if (e.key === 'Tab' && sessions.length > 0) {
         e.preventDefault()
-        const ids = ['home', ...tabs.map((t) => t.id)]
+        const ids = sessions.map((s) => s.id)
         const i = ids.indexOf(active)
         setActive(ids[(i + (e.shiftKey ? -1 : 1) + ids.length) % ids.length])
-      }
-      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'w' && active !== 'home') {
+      } else if (e.shiftKey && key === 'w' && active !== 'page') {
         e.preventDefault()
-        closeTab(active)
+        close(active)
+      } else if (e.shiftKey && key === 'l') {
+        e.preventDefault()
+        void api.vault.lock()
+      } else if (!inTerminal && !e.shiftKey && key === 'n') {
+        e.preventDefault()
+        go('hosts')
+        setNewHostSignal((n) => n + 1)
+      } else if (!inTerminal && e.key === ',') {
+        e.preventDefault()
+        go('settings')
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [tabs, active])
+  }, [sessions, active, vault])
 
   if (vault === null || settings === null) return null
-  if (vault !== 'unlocked') {
-    return <LockScreen state={vault} onDone={() => void api.vault.state().then(setVault)} />
-  }
+  if (vault !== 'unlocked') return <LockScreen state={vault} onDone={() => void api.vault.state().then(setVault)} />
+
+  const navItem = (p: Page, label: string, Icon: IconType, tile: string, trail?: string) => (
+    <button key={p} className={`side-item ${active === 'page' && page === p ? 'active' : ''}`} aria-current={active === 'page' && page === p ? 'page' : undefined} onClick={() => go(p)}>
+      <span className={`tile ${tile}`}>
+        <Icon size={13} strokeWidth={2.2} />
+      </span>
+      <span className="label">{label}</span>
+      {trail && <span className="trail">{trail}</span>}
+    </button>
+  )
 
   return (
     <div className="app">
       <aside className="sidebar">
-        <div className="brand">
-          <Logo size={28} /> Clavium
+        <div className="sidebar-head drag">
+          <Logo size={22} />
+          <span className="wordmark">Clavium</span>
+          <IconButton icon={Lock} label="Lock Vault (Ctrl+Shift+L)" onClick={() => void api.vault.lock()} />
         </div>
-        {NAV.map((n) => (
-          <button
-            key={n.page}
-            className={`nav-item ${active === 'home' && page === n.page ? 'active' : ''}`}
-            onClick={() => {
-              setPage(n.page)
-              setActive('home')
-            }}
-          >
-            <Icon name={n.icon} /> {n.label}
-            {n.page === 'mcp' && settings.mcpEnabled && <span className="badge ok">on</span>}
-          </button>
-        ))}
-        <div className="spacer" />
-        <button className="nav-item" onClick={() => void api.vault.lock()}>
-          <Icon name="lock" /> Lock
-        </button>
+
+        <nav className="sidebar-scroll" aria-label="Main">
+          {(sessions.length > 0 || tunnels.length > 0) && (
+            <>
+              <div className="side-title">Open</div>
+              {sessions.map((s) => (
+                <div
+                  key={s.id}
+                  role="button"
+                  tabIndex={0}
+                  className={`side-item ${active === s.id ? 'active' : ''}`}
+                  title={`${s.kind === 'terminal' ? 'Terminal' : 'Files'}: ${s.host.username}@${s.host.hostname}`}
+                  onClick={() => setActive(s.id)}
+                  onKeyDown={(e) => e.key === 'Enter' && setActive(s.id)}
+                  onAuxClick={(e) => e.button === 1 && close(s.id)}
+                >
+                  <span className="glyph">{s.kind === 'terminal' ? <SquareTerminal size={16} /> : <FolderOpen size={16} />}</span>
+                  <span className="label">{s.host.name}</span>
+                  <span className="trail hide-on-hover">
+                    <StatusDot state={s.state} />
+                  </span>
+                  <button
+                    className="close"
+                    aria-label={`Close ${s.host.name}`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      close(s.id)
+                    }}
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              ))}
+              {tunnels.map((t) => {
+                const host = hosts.find((h) => h.id === t.hostId)
+                return (
+                  <div
+                    key={`${t.hostId}:${t.forwardId}`}
+                    role="button"
+                    tabIndex={0}
+                    className="side-item"
+                    title={`Tunnel 127.0.0.1:${t.localPort} → ${t.remoteHost}:${t.remotePort}`}
+                    onClick={() => {
+                      setSelectedHost(t.hostId)
+                      go('hosts')
+                    }}
+                  >
+                    <span className="glyph">
+                      <ArrowLeftRight size={15} />
+                    </span>
+                    <span className="label">
+                      Port {t.localPort} · {host?.name ?? 'Tunnel'}
+                    </span>
+                    <span className="trail hide-on-hover">
+                      <span className="status-dot on" />
+                    </span>
+                    <button
+                      className="close"
+                      aria-label={`Stop tunnel on port ${t.localPort}`}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void api.fwd.stop(t.hostId, t.forwardId)
+                      }}
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                )
+              })}
+            </>
+          )}
+
+          <div className="side-title">Library</div>
+          {LIBRARY.map((n) => navItem(n.page, n.label, n.icon, n.tile))}
+
+          <div className="side-title">Automation</div>
+          {navItem('ai', 'AI Access', Sparkles, 'teal', settings.mcpEnabled ? 'On' : 'Off')}
+          {navItem('activity', 'Activity', History, 'gray')}
+        </nav>
+
+        <div className="sidebar-foot">{navItem('settings', 'Settings', Settings, 'gray')}</div>
       </aside>
 
       <main className="main">
-        <div className="tabbar">
-          <div className={`tab ${active === 'home' ? 'active' : ''}`} onClick={() => setActive('home')}>
-            <Icon name="server" size={14} /> <span className="title">{NAV.find((n) => n.page === page)?.label}</span>
-          </div>
-          {tabs.map((t) => (
-            <div
-              key={t.id}
-              className={`tab ${active === t.id ? 'active' : ''}`}
-              onClick={() => setActive(t.id)}
-              onAuxClick={(e) => e.button === 1 && closeTab(t.id)}
-              title={`${t.host.username}@${t.host.hostname}`}
-            >
-              <span className={`dot ${t.state === 'connected' ? 'on' : t.state === 'error' ? 'err' : ''}`} />
-              <Icon name={t.kind === 'terminal' ? 'terminal' : 'folder'} size={14} />
-              <span className="title">{t.host.name}</span>
-              <button
-                className="close"
-                aria-label="Close tab"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  closeTab(t.id)
-                }}
-              >
-                ×
-              </button>
-            </div>
-          ))}
+        <div className={`view ${active === 'page' ? '' : 'hidden'}`}>
+          {page === 'hosts' && (
+            <HostsPage
+              hosts={hosts}
+              keys={keys}
+              mcpEnabled={settings.mcpEnabled}
+              selectedId={selectedHost}
+              onSelect={setSelectedHost}
+              reload={reloadHosts}
+              openTerminal={(h) => open('terminal', h)}
+              openFiles={(h) => open('files', h)}
+              newHostSignal={newHostSignal}
+            />
+          )}
+          {page === 'keys' && <KeysPage keys={keys} reload={reloadKeys} />}
+          {page === 'known' && <KnownHostsPage />}
+          {page === 'ai' && <McpPage hosts={hosts} settings={settings} reloadHosts={reloadHosts} />}
+          {page === 'activity' && <ActivityPage />}
+          {page === 'settings' && <SettingsPage settings={settings} />}
         </div>
-
-        <div className="views">
-          <div className={`view ${active === 'home' ? '' : 'hidden'}`}>
-            {page === 'hosts' && (
-              <HostsPage
-                hosts={hosts}
-                keys={keys}
-                reload={reloadHosts}
-                openTerminal={(h) => openTab('terminal', h)}
-                openFiles={(h) => openTab('files', h)}
+        {sessions.map((s) => (
+          <div key={s.id} className={`view ${active === s.id ? '' : 'hidden'}`}>
+            {s.kind === 'terminal' ? (
+              <TerminalView
+                host={s.host}
+                active={active === s.id}
+                fontSize={settings.terminalFontSize}
+                onState={(st) => setSessionState(s.id, st)}
+                onOpenFiles={() => open('files', s.host)}
+                onClose={() => close(s.id)}
               />
+            ) : (
+              <FilesView host={s.host} onState={(st) => setSessionState(s.id, st)} onClose={() => close(s.id)} />
             )}
-            {page === 'keys' && <KeysPage keys={keys} reload={reloadKeys} />}
-            {page === 'known' && <KnownHostsPage />}
-            {page === 'forwards' && <ForwardsPage hosts={hosts} />}
-            {page === 'mcp' && <McpPage hosts={hosts} settings={settings} reloadHosts={reloadHosts} />}
-            {page === 'activity' && <ActivityPage />}
-            {page === 'settings' && <SettingsPage settings={settings} />}
           </div>
-          {tabs.map((t) => (
-            <div key={t.id} className={`view ${active === t.id ? '' : 'hidden'}`}>
-              {t.kind === 'terminal' ? (
-                <TerminalView
-                  host={t.host}
-                  active={active === t.id}
-                  fontSize={settings.terminalFontSize}
-                  onState={(s) => setTabState(t.id, s)}
-                />
-              ) : (
-                <FilesView host={t.host} onState={(s) => setTabState(t.id, s)} />
-              )}
-            </div>
-          ))}
-        </div>
+        ))}
       </main>
       <PromptHost />
     </div>

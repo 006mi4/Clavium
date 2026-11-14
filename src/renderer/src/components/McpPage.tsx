@@ -1,71 +1,74 @@
 import { useEffect, useState } from 'react'
+import { Copy, Eye, EyeOff } from 'lucide-react'
 import type { McpSnippets } from '@shared/ipc'
 import type { AiAccess, AiConfirm, HostSummary, McpStatus } from '@shared/types'
 import { api, hostToInput, on, type UiSettings } from '../api'
-import { Icon, Segmented, Switch, useToast } from '../ui'
+import { Group, Note, Row, Segmented, Select, Switch, Toolbar, useConfirm, useToast } from '../ui'
+import { AI_ACCESS_OPTIONS, AI_CONFIRM_OPTIONS } from './HostEditor'
+import { address } from './HostsPage'
 
 type Client = 'claudeCode' | 'claudeDesktop' | 'codex' | 'generic'
 
 const CLIENT_HELP: Record<Client, string> = {
-  claudeCode: 'Run this once in a terminal (PowerShell or cmd). It registers Clavium for all your projects.',
-  claudeDesktop:
-    'Claude Desktop → Settings → Developer → Edit Config. Merge this into claude_desktop_config.json and restart Claude Desktop.',
-  codex: 'Add this to %USERPROFILE%\\.codex\\config.toml and restart Codex.',
+  claudeCode: 'Run this command once in a terminal. Clavium is then available in all your Claude Code projects.',
+  claudeDesktop: 'In Claude Desktop, open Settings › Developer › Edit Config, add this entry and restart Claude Desktop.',
+  codex: 'Add this to .codex\\config.toml in your user folder and restart Codex.',
   generic: 'For any other MCP client that supports Streamable HTTP or stdio servers.'
 }
 
 export function McpPage(props: { hosts: HostSummary[]; settings: UiSettings; reloadHosts: () => void }) {
   const toast = useToast()
+  const confirm = useConfirm()
   const [status, setStatus] = useState<McpStatus | null>(null)
   const [snippets, setSnippets] = useState<McpSnippets | null>(null)
   const [client, setClient] = useState<Client>('claudeCode')
-  const [showSecrets, setShowSecrets] = useState(false)
+  const [revealed, setRevealed] = useState(false)
   const [port, setPort] = useState(String(props.settings.mcpPort))
+  const enabled = props.settings.mcpEnabled
 
-  const refresh = (): void => {
-    void api.mcp.status().then(setStatus)
-  }
+  const refresh = (): void => void api.mcp.status().then(setStatus)
   useEffect(() => {
     refresh()
-    return on('mcp:changed', () => {
-      refresh()
-      setSnippets(null)
-      setShowSecrets(false)
-    })
+    return on('mcp:changed', refresh)
   }, [])
+  useEffect(() => setPort(String(props.settings.mcpPort)), [props.settings.mcpPort])
 
-  const setEnabled = async (v: boolean): Promise<void> => {
-    try {
-      await api.settings.set({ mcpEnabled: v })
-      refresh()
-    } catch (e) {
-      toast.error(e)
+  // The configuration contains the token, so it is only loaded while the server is on.
+  useEffect(() => {
+    if (!enabled) {
+      setSnippets(null)
+      setRevealed(false)
+      return
     }
+    void api.mcp.snippets().then(setSnippets, toast.error)
+  }, [enabled, status?.port, status?.hasToken])
+
+  const applyPort = (): void => {
+    const n = Number(port)
+    if (n === props.settings.mcpPort) return
+    if (!Number.isInteger(n) || n < 1024 || n > 65535) {
+      toast.error('Choose a port between 1024 and 65535.')
+      setPort(String(props.settings.mcpPort))
+      return
+    }
+    void api.settings.set({ mcpPort: n }).then(refresh, toast.error)
   }
 
-  const reveal = async (): Promise<void> => {
-    try {
-      setSnippets(await api.mcp.snippets())
-      setShowSecrets(false) // masked until explicitly revealed (screen sharing!)
-    } catch (e) {
-      toast.error(e)
-    }
-  }
-
-  const regenerate = async (): Promise<void> => {
-    if (!confirm('Create a new token? All AI clients configured with the old token stop working until you update them.')) return
+  const resetToken = async (): Promise<void> => {
+    const ok = await confirm({
+      title: 'Reset the Access Token?',
+      message: 'Every AI client you set up stops working until you copy the new configuration into it.',
+      confirmLabel: 'Reset Token',
+      destructive: true
+    })
+    if (!ok) return
     try {
       await api.mcp.regenerate()
       setSnippets(await api.mcp.snippets())
-      setShowSecrets(true)
       toast.ok('New token created')
     } catch (e) {
       toast.error(e)
     }
-  }
-
-  const copy = (text: string): void => {
-    void api.clipboard.write(text).then(() => toast.ok('Copied to clipboard'))
   }
 
   const updateHost = async (h: HostSummary, patch: { aiAccess?: AiAccess; aiConfirm?: AiConfirm }): Promise<void> => {
@@ -77,160 +80,136 @@ export function McpPage(props: { hosts: HostSummary[]; settings: UiSettings; rel
     }
   }
 
-  const snippetText = snippets ? snippets[client] : ''
-  const masked = snippetText.replace(/clv_[A-Za-z0-9_-]+/g, 'clv_••••••••••••••••')
+  const text = snippets ? snippets[client] : ''
+  const shown = revealed ? text : text.replace(/clv_[A-Za-z0-9_-]+/g, 'clv_••••••••••••')
+  const shared = props.hosts.filter((h) => h.aiAccess !== 'none').length
 
   return (
-    <div className="page">
-      <h1>AI / MCP</h1>
-      <p className="sub">
-        Let Claude (Code / Desktop) or Codex use your servers through the Model Context Protocol — only the hosts you
-        share, only with the rights you grant, and with your approval.
-      </p>
+    <>
+      <Toolbar title="AI Access" />
+      <div className="view-scroll">
+        <div className="page">
+          <p className="page-intro">
+            Let Claude or Codex work on your servers through the Model Context Protocol (MCP). Assistants only see
+            the hosts you share, and by default every command waits for your approval.
+          </p>
 
-      <div className="section">
-        <div className="row between">
-          <div>
-            <h2 style={{ margin: 0 }}>MCP server</h2>
-            <div className="small muted">
-              {status?.running ? (
-                <>
-                  <span className="badge ok">running</span> on <span className="mono">{status.url}</span> (this
-                  computer only)
-                </>
-              ) : status?.enabled ? (
-                <span className="badge danger">not running</span>
-              ) : (
-                <span className="badge">off</span>
-              )}
-            </div>
-          </div>
-          <Switch on={props.settings.mcpEnabled} onChange={setEnabled} label="Enable MCP server" />
-        </div>
-        {status?.error && <div className="callout danger small" style={{ marginTop: 10 }}>{status.error}</div>}
-        <div className="row" style={{ marginTop: 12 }}>
-          <label className="field" style={{ width: 160 }}>
-            Port
-            <input className="input" type="number" value={port} onChange={(e) => setPort(e.target.value)} />
-          </label>
-          <button
-            className="btn sm"
-            style={{ alignSelf: 'flex-end' }}
-            disabled={Number(port) === props.settings.mcpPort}
-            onClick={() => api.settings.set({ mcpPort: Number(port) }).then(refresh, toast.error)}
+          <Group
+            caption={
+              status?.error ? undefined : enabled ? 'Only programs on this PC can connect, and only with the access token.' : 'While this is off, no AI client can reach Clavium.'
+            }
           >
-            Apply
-          </button>
-          <span className="small muted" style={{ alignSelf: 'flex-end', paddingBottom: 8 }}>
-            Changing the port requires updating the AI client configuration.
-          </span>
-        </div>
-      </div>
+            <Row
+              label="MCP Server"
+              hint={
+                status?.error ? (
+                  <span className="signal danger">{status.error}</span>
+                ) : status?.running ? (
+                  <span className="signal ok">Running on 127.0.0.1:{status.port}</span>
+                ) : (
+                  'Off'
+                )
+              }
+            >
+              <Switch on={enabled} label="MCP Server" onChange={(v) => void api.settings.set({ mcpEnabled: v }).then(refresh, toast.error)} />
+            </Row>
+            {enabled && (
+              <Row label="Port" hint="Changing it requires updating your AI clients.">
+                <input
+                  className="field"
+                  style={{ width: 90 }}
+                  type="number"
+                  value={port}
+                  onChange={(e) => setPort(e.target.value)}
+                  onBlur={applyPort}
+                  onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+                />
+              </Row>
+            )}
+          </Group>
 
-      {props.settings.mcpEnabled && (
-        <div className="section">
-          <h2>Connect an AI client</h2>
-          <div className="row" style={{ marginBottom: 10 }}>
-            <Segmented<Client>
-              value={client}
-              onChange={setClient}
-              options={[
-                { value: 'claudeCode', label: 'Claude Code' },
-                { value: 'claudeDesktop', label: 'Claude Desktop' },
-                { value: 'codex', label: 'Codex' },
-                { value: 'generic', label: 'Other' }
-              ]}
-            />
-          </div>
-          <div className="small muted" style={{ marginBottom: 8 }}>{CLIENT_HELP[client]}</div>
-          {snippets ? (
+          {enabled && (
             <>
-              <div className="code">{showSecrets ? snippetText : masked}</div>
-              <div className="row" style={{ marginTop: 8 }}>
-                <button className="btn sm primary" onClick={() => copy(snippetText)}>
-                  <Icon name="copy" size={14} /> Copy
+              <h3 className="group-title">Set Up a Client</h3>
+              <Segmented<Client>
+                label="AI client"
+                value={client}
+                onChange={setClient}
+                options={[
+                  { value: 'claudeCode', label: 'Claude Code' },
+                  { value: 'claudeDesktop', label: 'Claude Desktop' },
+                  { value: 'codex', label: 'Codex' },
+                  { value: 'generic', label: 'Other' }
+                ]}
+              />
+              <p className="caption" style={{ margin: '10px 0 8px' }}>
+                {CLIENT_HELP[client]}
+              </p>
+              <div className="code" data-testid="mcp-config">
+                {shown || 'Loading…'}
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' }}>
+                <button className="btn" disabled={!text} onClick={() => void api.clipboard.write(text).then(() => toast.ok('Copied'))}>
+                  <Copy size={14} /> Copy
                 </button>
-                <button className="btn sm" onClick={() => setShowSecrets((s) => !s)}>
-                  <Icon name="eye" size={14} /> {showSecrets ? 'Hide token' : 'Show token'}
+                <button className="btn" disabled={!text} onClick={() => setRevealed((r) => !r)}>
+                  {revealed ? <EyeOff size={14} /> : <Eye size={14} />} {revealed ? 'Hide Token' : 'Show Token'}
                 </button>
-                <span className="grow" />
-                <button className="btn sm danger" onClick={regenerate}>
-                  New token (revoke old)
+                <span style={{ flex: 1 }} />
+                <button className="btn destructive" onClick={() => void resetToken()}>
+                  Reset Token…
                 </button>
               </div>
+              <p className="caption" style={{ marginTop: 10 }}>
+                Treat the token like a password. Clavium must be running and unlocked for assistants to work; it can
+                stay in the notification area.
+              </p>
             </>
-          ) : (
-            <button className="btn" onClick={reveal}>
-              <Icon name="key" size={14} /> Show configuration
-            </button>
           )}
-          <div className="callout small" style={{ marginTop: 12 }}>
-            The token works like a password for the MCP server. Anyone with the token <i>and</i> access to this
-            computer could use your shared hosts — keep it inside the AI client's config. Clavium must be running
-            (it can live in the tray) and unlocked for tools to work.
-          </div>
-        </div>
-      )}
 
-      <div className="section">
-        <h2>Shared hosts</h2>
-        <table className="list">
-          <thead>
-            <tr>
-              <th>Host</th>
-              <th>AI access</th>
-              <th>Ask before</th>
-            </tr>
-          </thead>
-          <tbody>
+          <Group
+            title="Shared Hosts"
+            caption={
+              props.hosts.length === 0
+                ? undefined
+                : shared === 0
+                  ? 'No host is shared. Assistants can’t see or reach any of your servers.'
+                  : '“Read Files” never allows commands. “Full Access” also allows commands, uploads, renaming and deleting.'
+            }
+          >
+            {props.hosts.length === 0 && (
+              <div className="row" style={{ color: 'var(--text-2)' }}>
+                Add a host first.
+              </div>
+            )}
             {props.hosts.map((h) => (
-              <tr key={h.id}>
-                <td>
-                  <div>{h.name}</div>
-                  <div className="small muted mono">{h.hostname}</div>
-                </td>
-                <td>
-                  <Segmented<AiAccess>
-                    value={h.aiAccess}
-                    onChange={(v) => updateHost(h, { aiAccess: v })}
-                    options={[
-                      { value: 'none', label: 'Off' },
-                      { value: 'read', label: 'Read' },
-                      { value: 'full', label: 'Full' }
-                    ]}
-                  />
-                </td>
-                <td>
+              <div className="item" key={h.id} role="group" aria-label={h.name}>
+                <div className="body">
+                  <div className="primary">{h.name}</div>
+                  <div className="secondary mono">{address(h)}</div>
+                </div>
+                <div className="side">
                   {h.aiAccess !== 'none' && (
-                    <Segmented<AiConfirm>
+                    <Select<AiConfirm>
+                      label={`Ask before, ${h.name}`}
                       value={h.aiConfirm}
-                      onChange={(v) => updateHost(h, { aiConfirm: v })}
-                      options={[
-                        { value: 'all', label: 'Everything' },
-                        { value: 'changes', label: 'Changes' },
-                        { value: 'none', label: 'Never' }
-                      ]}
+                      onChange={(v) => void updateHost(h, { aiConfirm: v })}
+                      options={AI_CONFIRM_OPTIONS.map((o) => ({ ...o, label: o.value === 'none' ? 'Never Ask' : `Ask: ${o.label}` }))}
                     />
                   )}
-                </td>
-              </tr>
+                  <Select<AiAccess> label={`AI access, ${h.name}`} value={h.aiAccess} onChange={(v) => void updateHost(h, { aiAccess: v })} options={AI_ACCESS_OPTIONS} />
+                </div>
+              </div>
             ))}
-          </tbody>
-        </table>
-        {props.hosts.length === 0 && <div className="empty">Add hosts first.</div>}
-      </div>
+          </Group>
 
-      <div className="section">
-        <h2>How Clavium protects your servers</h2>
-        <ul className="small muted" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.7 }}>
-          <li>The MCP server only listens on 127.0.0.1 and requires a secret token; browser requests are rejected.</li>
-          <li>AI clients never see passwords or private keys — only host names you shared.</li>
-          <li>Hosts are hidden from AI unless you enable access per host. “Read” never allows commands.</li>
-          <li>By default every command and every change needs your click on “Allow once”.</li>
-          <li>Unknown or changed host keys are never accepted on behalf of the AI.</li>
-          <li>Everything the AI does is written to the Activity log.</li>
-        </ul>
+          {props.hosts.some((h) => h.aiAccess === 'full' && h.aiConfirm === 'none') && (
+            <div style={{ marginTop: 10 }}>
+              <Note kind="warn">At least one host allows full access without approval. An assistant can run any command there without asking you.</Note>
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+    </>
   )
 }

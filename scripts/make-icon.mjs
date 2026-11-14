@@ -1,4 +1,4 @@
-// Renders the Clavium icon (key on a blue-violet tile) to PNG and ICO without any
+// Renders the Clavium icon (key on a blue tile) to PNG and ICO without any
 // image library: signed-distance shapes, 4x4 supersampling, hand-written PNG/ICO encoder.
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { deflateSync } from 'node:zlib'
@@ -58,12 +58,13 @@ const sdSegment = (x, y, ax, ay, bx, by) => {
 
 function sample(x, y) {
   // returns [r,g,b,a] in 0..1
-  const tile = sdRoundRect(x, y, 32, 32, 30, 30, 15)
+  const tile = sdRoundRect(x, y, 32, 32, 29, 29, 14)
   if (tile > 0) return [0, 0, 0, 0]
-  const t = (x + y) / 128
-  let r = 0x3d / 255 + (0x8a / 255 - 0x3d / 255) * t
-  let g = 0x6b / 255 + (0x5b / 255 - 0x6b / 255) * t
-  let b = 1
+  // vertical single-hue gradient: #3f97ff (top) -> #0b5fd8 (bottom)
+  const t = Math.max(0, Math.min(1, (y - 3) / 58))
+  let r = (0x3f + (0x0b - 0x3f) * t) / 255
+  let g = (0x97 + (0x5f - 0x97) * t) / 255
+  let b = (0xff + (0xd8 - 0xff) * t) / 255
   const w = 2.75
   const ring = Math.abs(Math.hypot(x - 22, y - 32) - 9) - w
   const shaft = sdSegment(x, y, 31, 32, 51, 32) - w

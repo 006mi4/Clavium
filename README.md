@@ -11,12 +11,12 @@
 
 <p align="center">
   <a href="https://github.com/006mi4/Clavium/releases/latest"><b>Download for Windows</b></a> ·
-  <a href="#ai-access-mcp">AI / MCP setup</a> ·
+  <a href="#ai-access-mcp">AI access setup</a> ·
   <a href="SECURITY.md">Security</a> ·
   <a href="#deutsch">Deutsch</a>
 </p>
 
-![Terminal](docs/screenshots/05-terminal.png)
+![Hosts](docs/screenshots/03-hosts.png)
 
 *Clavium* comes from Latin *clavis* — "key".
 
@@ -27,17 +27,45 @@
 - **SFTP file manager**: browse, upload (files, folders, drag & drop), download, rename, delete, new folder,
   transfer progress
 - **FTPS** (explicit and implicit TLS) and plain FTP (clearly marked as unencrypted)
-- **Port forwarding** (`ssh -L` style tunnels, bound to 127.0.0.1 only)
-- **Keychain**: generate Ed25519 / ECDSA / RSA-4096 keys or import existing ones (with passphrase)
+- **Tunnels** (`ssh -L` style port forwarding, bound to 127.0.0.1 only)
+- **Keys**: generate Ed25519 / ECDSA / RSA-4096 keys or import existing ones (with passphrase)
 - **Known hosts** with trust-on-first-use and loud warnings when a server key changes
 - **Encrypted vault** (scrypt + AES-256-GCM) for all hosts, passwords and keys, auto-lock, lock on Windows lock
 - **MCP server for AI clients** (Claude Code, Claude Desktop, Codex, any MCP client) with per-host access
   levels, approval dialogs and an activity log
-- Tray mode, installer and portable `.exe`
+- Native-feeling interface that follows the Windows light / dark setting; tray mode, installer and portable `.exe`
 
-| Hosts | SFTP | AI approval |
-|---|---|---|
-| ![Hosts](docs/screenshots/03-hosts.png) | ![SFTP](docs/screenshots/06-sftp.png) | ![AI approval](docs/screenshots/08-ai-approval.png) |
+## Screenshots
+
+Clavium follows the Windows light / dark setting.
+
+| Hosts | Hosts (dark) |
+|---|---|
+| ![Hosts](docs/screenshots/03-hosts.png) | ![Hosts, dark](docs/screenshots/03-hosts-dark.png) |
+
+| Terminal | Terminal (dark) |
+|---|---|
+| ![Terminal](docs/screenshots/05-terminal.png) | ![Terminal, dark](docs/screenshots/05-terminal-dark.png) |
+
+| Files (SFTP) | New host |
+|---|---|
+| ![SFTP](docs/screenshots/06-sftp.png) | ![Host editor](docs/screenshots/02-host-editor.png) |
+
+| AI access | Approval before a command runs |
+|---|---|
+| ![AI access](docs/screenshots/07-ai-access.png) | ![AI approval](docs/screenshots/08-ai-approval-dark.png) |
+
+| Host key verification | Activity log |
+|---|---|
+| ![Host key](docs/screenshots/04-host-key.png) | ![Activity](docs/screenshots/09-activity.png) |
+
+| Keys | Settings (dark) |
+|---|---|
+| ![Keys](docs/screenshots/10-keys.png) | ![Settings](docs/screenshots/11-settings-dark.png) |
+
+| First start | Locked (dark) |
+|---|---|
+| ![Create vault](docs/screenshots/01-create-vault.png) | ![Locked](docs/screenshots/12-locked-dark.png) |
 
 ## Download & install
 
@@ -80,9 +108,9 @@ For every shared host you also choose when Clavium asks you first: **every actio
 
 ### Setup
 
-1. Clavium → **AI / MCP** → switch the MCP server on.
-2. Edit a host → *AI access* → choose *Read* or *Full*.
-3. Click **Show configuration**, pick your client and copy the snippet:
+1. Clavium → **AI Access** → switch **MCP Server** on.
+2. Under *Shared Hosts* (or in a host's details) set *Allow AI to* → *Read Files* or *Full Access*.
+3. Under *Set Up a Client*, pick your client and click **Copy**:
 
 **Claude Code** (one command, available in all projects):
 
@@ -207,5 +235,5 @@ Server nutzen können — aber nur Hosts, die du freigibst, nur mit den Rechten,
 zeigt Windows evtl. „Der Computer wurde durch Windows geschützt" → **Weitere Informationen → Trotzdem
 ausführen**. Die Echtheit lässt sich mit `SHA256SUMS.txt` bzw. `gh attestation verify` prüfen (siehe oben).
 
-**KI einrichten:** Clavium → *AI / MCP* → Server einschalten → bei einem Host *AI access* auf *Read* oder
-*Full* stellen → *Show configuration* → Snippet für Claude Code, Claude Desktop oder Codex kopieren.
+**KI einrichten:** Clavium → *AI Access* → *MCP Server* einschalten → bei einem Host *Allow AI to* auf
+*Read Files* oder *Full Access* stellen → unter *Set Up a Client* das Snippet für Claude Code, Claude Desktop oder Codex kopieren.

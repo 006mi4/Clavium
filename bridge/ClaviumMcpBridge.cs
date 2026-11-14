@@ -43,7 +43,7 @@ internal static class ClaviumMcpBridge
             return 0;
         }
         if (_token.Length == 0)
-            Log("CLAVIUM_MCP_TOKEN is not set. Copy the configuration from Clavium > AI / MCP.");
+            Log("CLAVIUM_MCP_TOKEN is not set. Copy the configuration from Clavium > AI Access.");
 
         _stdout = Console.OpenStandardOutput();
         var stdin = new StreamReader(Console.OpenStandardInput(), Utf8);

@@ -161,7 +161,7 @@ export class McpService {
       if (!accessAllows(host.aiAccess, op)) {
         await this.deps.audit.write({ source: 'mcp', action: tool, hostId: host.id, hostName: host.name, detail, result: 'denied' })
         return text(
-          `Denied: host "${host.name}" only allows read-only AI access. The user can change this in Clavium → host settings → AI access.`,
+          `Denied: host "${host.name}" only allows read-only AI access. The user can change this in Clavium under AI Access.`,
           true
         )
       }
@@ -243,7 +243,7 @@ export class McpService {
               confirmation: h.aiConfirm
             }))
           if (hosts.length === 0) {
-            return text('No hosts are shared with AI. The user can enable "AI access" per host in Clavium.')
+            return text('No hosts are shared with AI. The user can share hosts in Clavium under AI Access.')
           }
           return text(JSON.stringify(hosts, null, 2))
         } catch (e) {

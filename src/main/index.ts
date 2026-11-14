@@ -5,6 +5,7 @@ import {
   BrowserWindow,
   Menu,
   nativeImage,
+  nativeTheme,
   powerMonitor,
   session,
   Tray,
@@ -124,17 +125,36 @@ function runApp(): void {
     ? join(process.resourcesPath, 'icon.png')
     : join(app.getAppPath(), 'resources', 'icon.png')
 
+  // Window chrome follows the system appearance (light / dark). Keep in sync with --bg in styles.css.
+  const chrome = (): { bg: string; symbols: string } =>
+    nativeTheme.shouldUseDarkColors ? { bg: '#1c1c1e', symbols: '#f2f2f4' } : { bg: '#ffffff', symbols: '#1c1c1e' }
+  const TITLEBAR_HEIGHT = 48
+
+  nativeTheme.on('updated', () => {
+    const w = getWindow()
+    if (!w) return
+    const c = chrome()
+    w.setBackgroundColor(c.bg)
+    if (process.platform === 'win32') {
+      w.setTitleBarOverlay({ color: c.bg, symbolColor: c.symbols, height: TITLEBAR_HEIGHT })
+    }
+  })
+
   function createWindow(): void {
+    const c = chrome()
     mainWindow = new BrowserWindow({
       width: 1280,
       height: 800,
-      minWidth: 900,
-      minHeight: 560,
+      minWidth: 940,
+      minHeight: 600,
       show: false,
       title: 'Clavium',
-      backgroundColor: '#0f1117',
+      backgroundColor: c.bg,
       icon: existsSync(iconPath) ? iconPath : undefined,
       autoHideMenuBar: true,
+      // The app draws its own unified toolbar; Windows keeps its native caption buttons on top of it.
+      titleBarStyle: 'hidden',
+      titleBarOverlay: { color: c.bg, symbolColor: c.symbols, height: TITLEBAR_HEIGHT },
       webPreferences: {
         preload: join(__dirname, '../preload/index.js'),
         contextIsolation: true,

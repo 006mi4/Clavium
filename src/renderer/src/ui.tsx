@@ -1,6 +1,20 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode
+} from 'react'
+import { CircleAlert, CircleCheck, Info, TriangleAlert, type LucideProps } from 'lucide-react'
 
-// ---------------------------------------------------------------- toasts --
+export type IconType = ComponentType<LucideProps>
+
+// --------------------------------------------------------------- toasts --
 
 interface Toast {
   id: number
@@ -10,24 +24,16 @@ interface Toast {
 
 const ToastCtx = createContext<(kind: Toast['kind'], text: string) => void>(() => undefined)
 
-export function ToastProvider({ children }: { children: ReactNode }) {
-  const [toasts, setToasts] = useState<Toast[]>([])
-  const push = useCallback((kind: Toast['kind'], text: string) => {
-    const id = Date.now() + Math.random()
-    setToasts((t) => [...t.slice(-4), { id, kind, text }])
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === 'error' ? 7000 : 3500)
-  }, [])
+function ToastHost({ toasts }: { toasts: Toast[] }) {
   return (
-    <ToastCtx.Provider value={push}>
-      {children}
-      <div className="toasts">
-        {toasts.map((t) => (
-          <div key={t.id} className={`toast ${t.kind}`}>
-            {t.text}
-          </div>
-        ))}
-      </div>
-    </ToastCtx.Provider>
+    <div className="toasts" role="status" aria-live="polite">
+      {toasts.map((t) => (
+        <div key={t.id} className={`toast ${t.kind}`}>
+          {t.kind === 'ok' ? <CircleCheck size={15} /> : t.kind === 'error' ? <CircleAlert size={15} /> : <Info size={15} />}
+          <span>{t.text}</span>
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -40,27 +46,99 @@ export function useToast() {
   }
 }
 
-// ----------------------------------------------------------------- modal --
+// -------------------------------------------------------------- confirm --
 
-export function Modal(props: {
+export interface ConfirmOptions {
+  title: string
+  message?: string
+  confirmLabel: string
+  destructive?: boolean
+}
+
+const ConfirmCtx = createContext<(o: ConfirmOptions) => Promise<boolean>>(() => Promise.resolve(false))
+
+/** Promise-based confirmation sheet: `if (await confirm({...})) …` */
+export function useConfirm() {
+  return useContext(ConfirmCtx)
+}
+
+/** Toasts + confirmation dialogs for the whole app. */
+export function FeedbackProvider({ children }: { children: ReactNode }) {
+  const [toasts, setToasts] = useState<Toast[]>([])
+  const [pending, setPending] = useState<(ConfirmOptions & { resolve: (v: boolean) => void }) | null>(null)
+
+  const push = useCallback((kind: Toast['kind'], text: string) => {
+    const id = Date.now() + Math.random()
+    setToasts((t) => [...t.slice(-2), { id, kind, text }])
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === 'error' ? 7000 : 2800)
+  }, [])
+
+  const confirm = useCallback(
+    (o: ConfirmOptions) => new Promise<boolean>((resolve) => setPending({ ...o, resolve })),
+    []
+  )
+  const answer = (v: boolean): void => {
+    pending?.resolve(v)
+    setPending(null)
+  }
+
+  return (
+    <ToastCtx.Provider value={push}>
+      <ConfirmCtx.Provider value={confirm}>
+        {children}
+        {pending && (
+          <Sheet
+            size="narrow"
+            title={pending.title}
+            onClose={() => answer(false)}
+            footer={
+              <>
+                <button className="btn" onClick={() => answer(false)} autoFocus>
+                  Cancel
+                </button>
+                <button className={`btn ${pending.destructive ? 'destructive filled' : 'prominent'}`} onClick={() => answer(true)}>
+                  {pending.confirmLabel}
+                </button>
+              </>
+            }
+          >
+            {pending.message && <p>{pending.message}</p>}
+          </Sheet>
+        )}
+        <ToastHost toasts={toasts} />
+      </ConfirmCtx.Provider>
+    </ToastCtx.Provider>
+  )
+}
+
+// ---------------------------------------------------------------- sheet --
+
+export function Sheet(props: {
   title: ReactNode
-  children: ReactNode
+  eyebrow?: ReactNode
+  children?: ReactNode
   footer?: ReactNode
   onClose?: () => void
-  className?: string
+  size?: 'narrow' | 'regular' | 'wide'
 }) {
   useEffect(() => {
     if (!props.onClose) return
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') props.onClose?.()
+      if (e.key === 'Escape') {
+        e.stopPropagation()
+        props.onClose?.()
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [props.onClose])
   return (
-    <div className="backdrop">
-      <div className={`modal ${props.className ?? ''}`} role="dialog" aria-modal="true">
-        <header>{props.title}</header>
+    <div className="scrim">
+      <div className={`sheet ${props.size === 'regular' ? '' : (props.size ?? '')}`} role="dialog" aria-modal="true">
+        <header>
+          {props.eyebrow && <div className="eyebrow">{props.eyebrow}</div>}
+          <h2>{props.title}</h2>
+        </header>
         <div className="body">{props.children}</div>
         {props.footer && <footer>{props.footer}</footer>}
       </div>
@@ -68,34 +146,249 @@ export function Modal(props: {
   )
 }
 
-export function Switch({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label?: string }) {
+// ---------------------------------------------------------------- menus --
+
+export type MenuItem =
+  | { label: string; icon?: IconType; onSelect: () => void; destructive?: boolean; disabled?: boolean }
+  | 'separator'
+
+interface MenuState {
+  x: number
+  y: number
+  align: 'left' | 'right'
+  items: MenuItem[]
+}
+
+function MenuPopover({ menu, close }: { menu: MenuState; close: () => void }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState({ left: menu.x, top: menu.y, ready: false })
+
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    let left = menu.align === 'right' ? menu.x - r.width : menu.x
+    let top = menu.y
+    left = Math.max(8, Math.min(left, window.innerWidth - r.width - 8))
+    if (top + r.height > window.innerHeight - 8) top = Math.max(8, window.innerHeight - r.height - 8)
+    setPos({ left, top, ready: true })
+    el.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true })
+  }, [menu])
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent): void => {
+      if (!ref.current?.contains(e.target as Node)) close()
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') close()
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault()
+        const buttons = [...(ref.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])]
+        const i = buttons.indexOf(document.activeElement as HTMLButtonElement)
+        buttons[(i + (e.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus()
+      }
+    }
+    window.addEventListener('mousedown', onDown, true)
+    window.addEventListener('keydown', onKey, true)
+    window.addEventListener('blur', close)
+    window.addEventListener('resize', close)
+    return () => {
+      window.removeEventListener('mousedown', onDown, true)
+      window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('blur', close)
+      window.removeEventListener('resize', close)
+    }
+  }, [close])
+
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      aria-label={label}
-      className={`switch ${on ? 'on' : ''}`}
-      onClick={() => onChange(!on)}
-    />
+    <div ref={ref} className="menu" role="menu" style={{ left: pos.left, top: pos.top, visibility: pos.ready ? 'visible' : 'hidden' }}>
+      {menu.items.map((item, i) =>
+        item === 'separator' ? (
+          <hr key={i} />
+        ) : (
+          <button
+            key={i}
+            role="menuitem"
+            className={item.destructive ? 'destructive' : ''}
+            disabled={item.disabled}
+            onClick={() => {
+              close()
+              item.onSelect()
+            }}
+          >
+            {item.icon && <item.icon size={15} />}
+            {item.label}
+          </button>
+        )
+      )}
+    </div>
   )
+}
+
+/** One menu at a time: `const menu = useMenu()` → `menu.openAt(event, items)` and render `{menu.element}`. */
+export function useMenu() {
+  const [state, setState] = useState<MenuState | null>(null)
+  const close = useCallback(() => setState(null), [])
+  return {
+    /** Context menu at the pointer position. */
+    openAt(e: ReactMouseEvent, items: MenuItem[]): void {
+      e.preventDefault()
+      setState({ x: e.clientX, y: e.clientY, align: 'left', items })
+    },
+    /** Pull-down menu attached to the clicked button. */
+    openBelow(e: ReactMouseEvent<HTMLElement>, items: MenuItem[], align: 'left' | 'right' = 'right'): void {
+      const r = e.currentTarget.getBoundingClientRect()
+      setState({ x: align === 'right' ? r.right : r.left, y: r.bottom + 4, align, items })
+    },
+    element: state ? <MenuPopover menu={state} close={close} /> : null
+  }
+}
+
+// ------------------------------------------------------------- controls --
+
+export function Switch({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label?: string }) {
+  return <button type="button" role="switch" aria-checked={on} aria-label={label} className="switch" onClick={() => onChange(!on)} />
 }
 
 export function Segmented<T extends string>(props: {
   value: T
   options: { value: T; label: string }[]
   onChange: (v: T) => void
+  label?: string
 }) {
   return (
-    <div className="seg">
+    <div className="segmented" role="group" aria-label={props.label}>
       {props.options.map((o) => (
-        <button key={o.value} type="button" className={o.value === props.value ? 'on' : ''} onClick={() => props.onChange(o.value)}>
+        <button key={o.value} type="button" aria-pressed={o.value === props.value} onClick={() => props.onChange(o.value)}>
           {o.label}
         </button>
       ))}
     </div>
   )
 }
+
+export function Select<T extends string | number>(props: {
+  value: T
+  options: { value: T; label: string }[]
+  onChange: (v: T) => void
+  label?: string
+  width?: number
+}) {
+  const numeric = typeof props.value === 'number'
+  return (
+    <select
+      className="field"
+      aria-label={props.label}
+      style={props.width ? { width: props.width } : { width: 'auto' }}
+      value={props.value}
+      onChange={(e) => props.onChange((numeric ? Number(e.target.value) : e.target.value) as T)}
+    >
+      {props.options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  )
+}
+
+export function IconButton(props: {
+  icon: IconType
+  label: string
+  onClick?: (e: ReactMouseEvent<HTMLButtonElement>) => void
+  disabled?: boolean
+}) {
+  return (
+    <button type="button" className="icon-btn" title={props.label} aria-label={props.label} disabled={props.disabled} onClick={props.onClick}>
+      <props.icon size={16} />
+    </button>
+  )
+}
+
+// ---------------------------------------------------------------- forms --
+
+export function Group({ title, caption, children }: { title?: string; caption?: ReactNode; children: ReactNode }) {
+  return (
+    <>
+      {title && <h3 className="group-title">{title}</h3>}
+      <div className="group">{children}</div>
+      {caption && <p className="caption">{caption}</p>}
+    </>
+  )
+}
+
+/**
+ * One line of a grouped form: label on the left, control on the right.
+ * With a single input/select/switch inside, the whole row is a <label> (clicking the text focuses it).
+ * Use `multi` for rows that contain several controls (segmented, buttons).
+ */
+export function Row(props: { label: string; hint?: ReactNode; children?: ReactNode; multi?: boolean; stacked?: boolean }) {
+  const inner = (
+    <>
+      <span className="row-label">
+        {props.label}
+        {props.hint && <span className="hint">{props.hint}</span>}
+      </span>
+      <span className="row-control">{props.children}</span>
+    </>
+  )
+  const cls = `row${props.stacked ? ' stacked' : ''}`
+  return props.multi ? (
+    <div className={cls} role="group" aria-label={props.label}>
+      {inner}
+    </div>
+  ) : (
+    <label className={cls}>{inner}</label>
+  )
+}
+
+/** Read-only line: label left, value right. */
+export function ValueRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="row">
+      <span className="row-label">{label}</span>
+      <span className="row-value">{children}</span>
+    </div>
+  )
+}
+
+export function Note({ kind = 'info', children }: { kind?: 'info' | 'warn' | 'danger'; children: ReactNode }) {
+  return (
+    <div className={`note ${kind === 'info' ? '' : kind}`}>
+      {kind === 'info' ? <Info size={15} /> : <TriangleAlert size={15} />}
+      <div>{children}</div>
+    </div>
+  )
+}
+
+export function Empty(props: { icon: IconType; title: string; children?: ReactNode; action?: ReactNode }) {
+  return (
+    <div className="empty">
+      <props.icon size={34} strokeWidth={1.4} />
+      <h2>{props.title}</h2>
+      {props.children && <p>{props.children}</p>}
+      {props.action}
+    </div>
+  )
+}
+
+// --------------------------------------------------------------- layout --
+
+/** Unified toolbar of a view. It is also the window's drag region. */
+export function Toolbar(props: { title: ReactNode; subtitle?: ReactNode; lead?: ReactNode; children?: ReactNode }) {
+  return (
+    <div className="toolbar drag">
+      {props.lead}
+      <div className="titles">
+        <span className="title">{props.title}</span>
+        {props.subtitle && <span className="subtitle">{props.subtitle}</span>}
+      </div>
+      {props.children}
+    </div>
+  )
+}
+
+// -------------------------------------------------------------- helpers --
 
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -111,41 +404,18 @@ export function formatBytes(n: number): string {
 
 export function formatDate(ms: number): string {
   if (!ms) return '—'
-  return new Date(ms).toLocaleString()
+  return new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 }
 
-/** Inline SVG icons (no external assets, CSP-friendly). */
-export function Icon({ name, size = 16 }: { name: string; size?: number }) {
-  const paths: Record<string, string> = {
-    server: 'M4 5h16v5H4zM4 14h16v5H4zM7 7.5h.01M7 16.5h.01',
-    key: 'M15 7a4 4 0 1 1-3.9 4.9L4 19v-3h3v-3h3l1.1-1.1A4 4 0 0 1 15 7zM16 9h.01',
-    shield: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z',
-    ai: 'M12 3v3M12 18v3M3 12h3M18 12h3M6 6l2 2M16 16l2 2M6 18l2-2M16 8l2-2M9 9h6v6H9z',
-    list: 'M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01',
-    gear: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z',
-    lock: 'M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4',
-    terminal: 'M4 5h16v14H4zM7 9l3 3-3 3M12 15h5',
-    folder: 'M3 6h6l2 2h10v11H3z',
-    file: 'M6 3h8l4 4v14H6zM14 3v4h4',
-    link: 'M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1',
-    plus: 'M12 5v14M5 12h14',
-    up: 'M12 19V5M5 12l7-7 7 7',
-    refresh: 'M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7',
-    home: 'M3 11l9-8 9 8M5 10v10h14V10',
-    upload: 'M12 16V4M6 10l6-6 6 6M4 20h16',
-    download: 'M12 4v12M6 10l6 6 6-6M4 20h16',
-    trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13',
-    edit: 'M4 20h4L19 9l-4-4L4 16zM14 6l4 4',
-    copy: 'M8 8h12v12H8zM4 16V4h12',
-    forward: 'M4 12h14M13 6l6 6-6 6',
-    eye: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
-    play: 'M7 5l12 7-12 7z',
-    stop: 'M6 6h12v12H6z',
-    newfolder: 'M3 6h6l2 2h10v11H3zM12 11v5M9.5 13.5h5'
-  }
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d={paths[name] ?? ''} />
-    </svg>
-  )
+/** Tracks the system appearance so non-CSS consumers (the terminal) can follow it. */
+export function useDarkMode(): boolean {
+  const query = '(prefers-color-scheme: dark)'
+  const [dark, setDark] = useState(() => window.matchMedia(query).matches)
+  useEffect(() => {
+    const mq = window.matchMedia(query)
+    const onChange = (): void => setDark(mq.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+  return dark
 }
