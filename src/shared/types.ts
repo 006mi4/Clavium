@@ -208,3 +208,23 @@ export interface TextFile {
 }
 
 export type TextWriteResult = { saved: true; version: TextFileVersion } | { saved: false; conflict: 'changed' | 'deleted' }
+
+// ---- editor <-> MCP -------------------------------------------------------
+
+/** A file that is open in the built-in editor. */
+export interface EditorFileInfo {
+  hostId: string
+  path: string
+  name: string
+  /** has changes that are not saved to the server yet */
+  unsaved: boolean
+}
+
+/** A change an AI client wants to make to the text in the editor (never saved automatically). */
+export type EditorEdit = { kind: 'replace'; oldText: string; newText: string; all: boolean } | { kind: 'all'; newText: string }
+
+export type EditorRequest =
+  | { op: 'list' }
+  | { op: 'open'; hostId: string; path: string }
+  | { op: 'read'; hostId: string; path: string }
+  | { op: 'edit'; hostId: string; path: string; edit: EditorEdit }

@@ -306,3 +306,20 @@ export function renderMarks(text: string, marks: Mark[], escape: (s: string) => 
   }
   return out + escape(text.slice(last))
 }
+
+// ------------------------------------------------------- edits from MCP --
+
+/** Apply a change requested by an AI client. Throws a readable error if it does not fit the text. */
+export function applyAiEdit(
+  text: string,
+  edit: { kind: 'replace'; oldText: string; newText: string; all: boolean } | { kind: 'all'; newText: string }
+): { text: string; count: number } {
+  if (edit.kind === 'all') return { text: edit.newText.replace(/\r\n/g, '\n'), count: 1 }
+  const oldText = edit.oldText.replace(/\r\n/g, '\n')
+  const newText = edit.newText.replace(/\r\n/g, '\n')
+  if (!oldText) throw new Error('old_text is empty')
+  const count = text.split(oldText).length - 1
+  if (count === 0) throw new Error('old_text was not found in the file. It must match the text exactly, including spaces and line breaks.')
+  if (count > 1 && !edit.all) throw new Error(`old_text occurs ${count} times. Add more surrounding text to make it unique, or set replace_all.`)
+  return { text: edit.all ? text.split(oldText).join(newText) : text.replace(oldText, () => newText), count: edit.all ? count : 1 }
+}

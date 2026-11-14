@@ -3,7 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { Client as SshClient } from 'ssh2'
 import { z } from 'zod'
-import type { HostRecord } from '@shared/types'
+import type { EditorEdit, EditorFileInfo, HostRecord } from '@shared/types'
 import type { AuditLog } from '../audit'
 import type { Prompter } from '../prompter'
 import { openRemoteFs, type RemoteFs } from '../remotefs'
@@ -22,11 +22,21 @@ export const MCP_LIMITS = {
   maxConcurrentCalls: 4
 }
 
+/** Access to the files open in the user's editor window. Implemented by the Electron app. */
+export interface EditorBridge {
+  list(): Promise<EditorFileInfo[]>
+  open(hostId: string, path: string): Promise<void>
+  read(hostId: string, path: string): Promise<{ text: string; unsaved: boolean }>
+  /** Changes the text in the editor only. Returns how many places were replaced. */
+  edit(hostId: string, path: string, edit: EditorEdit): Promise<number>
+}
+
 export interface McpDeps {
   vault: Vault
   prompter: Prompter
   audit: AuditLog
   version: string
+  editor?: EditorBridge
 }
 
 class ToolError extends Error {}
@@ -477,7 +487,121 @@ export class McpService {
         )
     )
 
+    this.registerEditorTools(server)
     return server
+  }
+
+  /**
+   * Tools that work on the files open in the user's built-in editor. An edit only changes the
+   * text in the editor window; the user reviews it there and decides whether to save.
+   */
+  private registerEditorTools(server: McpServer): void {
+    const editor = (): EditorBridge => {
+      if (!this.deps.editor) throw new ToolError('The Clavium editor is not available.')
+      return this.deps.editor
+    }
+    const short = (t: string, n = 700): string => (t.length > n ? t.slice(0, n) + '\n…' : t)
+
+    server.registerTool(
+      'editor_list_open_files',
+      {
+        title: 'List files open in the editor',
+        description:
+          'List the files the user currently has open in the Clavium text editor (only on hosts shared with AI), and whether they have unsaved changes.',
+        inputSchema: {},
+        annotations: { readOnlyHint: true, openWorldHint: false }
+      },
+      async () => {
+        try {
+          if (this.deps.vault.state() !== 'unlocked') return text('Clavium is locked. Ask the user to unlock Clavium with the master password, then retry.', true)
+          const shared = new Map(this.deps.vault.data.hosts.filter((h) => h.aiAccess !== 'none').map((h) => [h.id, h.name]))
+          const files = (await editor().list())
+            .filter((f) => shared.has(f.hostId))
+            .map((f) => ({ host: shared.get(f.hostId), path: f.path, unsaved_changes: f.unsaved }))
+          return text(files.length ? JSON.stringify(files, null, 2) : 'No files of shared hosts are open in the editor.')
+        } catch (e) {
+          return text(`Error: ${(e as Error).message}`, true)
+        }
+      }
+    )
+
+    server.registerTool(
+      'editor_open_file',
+      {
+        title: 'Open a file in the editor',
+        description: 'Open a remote text file in the user\'s Clavium editor so they can see it. Does not change anything on the server.',
+        inputSchema: { host: hostParam, path: pathParam },
+        annotations: { readOnlyHint: true, openWorldHint: true }
+      },
+      async ({ host, path }) =>
+        this.guarded(
+          'editor_open_file',
+          host,
+          'read',
+          (h) => ({ summary: `Open a file from ${h.name} in your editor`, detail: path }),
+          async (h) => {
+            await editor().open(h.id, path)
+            return text(`Opened ${path} in the editor.`)
+          }
+        )
+    )
+
+    server.registerTool(
+      'editor_read_file',
+      {
+        title: 'Read a file from the editor',
+        description:
+          'Read the current text of a file that is open in the editor, including changes the user has not saved yet. Use editor_open_file first if it is not open.',
+        inputSchema: { host: hostParam, path: pathParam },
+        annotations: { readOnlyHint: true, openWorldHint: false }
+      },
+      async ({ host, path }) =>
+        this.guarded(
+          'editor_read_file',
+          host,
+          'read',
+          (h) => ({ summary: `Read a file open in your editor (${h.name})`, detail: path }),
+          async (h) => {
+            const r = await editor().read(h.id, path)
+            return text(r.text + (r.unsaved ? '\n\n[note: this text contains changes that are not saved to the server]' : ''))
+          }
+        )
+    )
+
+    server.registerTool(
+      'editor_edit_file',
+      {
+        title: 'Edit a file in the editor',
+        description:
+          'Change the text of a file that is open in the editor. The change is NOT saved: the user sees it in the editor, reviews it and saves it themselves. ' +
+          'Give old_text exactly as it appears in the file (it must occur once, or set replace_all), or set replace_entire_file to replace everything. Requires full AI access.',
+        inputSchema: {
+          host: hostParam,
+          path: pathParam,
+          old_text: z.string().max(MCP_LIMITS.writeMaxBytes).optional(),
+          new_text: z.string().max(MCP_LIMITS.writeMaxBytes),
+          replace_all: z.boolean().optional(),
+          replace_entire_file: z.boolean().optional()
+        },
+        annotations: { destructiveHint: false, openWorldHint: false }
+      },
+      async ({ host, path, old_text, new_text, replace_all, replace_entire_file }) =>
+        this.guarded(
+          'editor_edit_file',
+          host,
+          'write',
+          (h) => ({
+            summary: `Change a file in your editor (${h.name}), without saving`,
+            detail: replace_entire_file ? `${path}\n\nReplace the whole text with:\n${short(new_text, 1400)}` : `${path}\n\n- ${short(old_text ?? '')}\n+ ${short(new_text)}`
+          }),
+          async (h) => {
+            if (!replace_entire_file && !old_text) throw new ToolError('Give old_text, or set replace_entire_file to true.')
+            const edit: EditorEdit = replace_entire_file ? { kind: 'all', newText: new_text } : { kind: 'replace', oldText: old_text as string, newText: new_text, all: replace_all ?? false }
+            const n = await editor().edit(h.id, path, edit)
+            return text(`Changed ${n} ${n === 1 ? 'place' : 'places'} in the editor. The file is not saved yet; the user reviews and saves it.`)
+          }
+        )
+    )
   }
 
   shutdown(): void {

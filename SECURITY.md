@@ -62,6 +62,9 @@ Non-secret preferences live in `settings.json`; the AI activity log in `audit.lo
   auto-deny after 120 s.
 - The AI never receives passwords, keys or the vault. Tool output is size-limited.
 - All requests, including denied ones, are written to the activity log.
+- Editor tools follow the same rules: only files of shared hosts are listed, reading needs *read*, changing
+  needs *full* access and approval. A change only alters the text in the editor window, is marked as made by
+  an AI, and is never saved to the server by the AI.
 - Prompt injection: an AI agent may be tricked by data it reads (files, command output). Approvals exist
   precisely for this. Do not set *Full* access without approval on production systems.
 

@@ -11,6 +11,7 @@ import { MAX_TEXT_BYTES, readTextFile, writeTextFile } from './core/textfile'
 import type { Vault } from './core/vault'
 import type { FileManager } from './files'
 import type { ForwardManager } from './forwards'
+import type { WindowEditorBridge } from './editorBridge'
 import type { McpController } from './mcpController'
 import type { UiPrompter } from './prompts'
 import type { TerminalManager } from './terminals'
@@ -29,6 +30,7 @@ export interface IpcContext {
   files: FileManager
   forwards: ForwardManager
   updater: Updater
+  editor: WindowEditorBridge
 }
 
 // ------------------------------------------------------------ schemas ----
@@ -293,6 +295,9 @@ export function registerIpc(ctx: IpcContext): void {
   handle('prompt:respond', z.tuple([id, promptResponseSchema]), (pid, resp) =>
     ctx.prompter.respond(pid, resp as PromptResponse)
   )
+
+  // answers of the editor to requests from the MCP server
+  handle('editor:respond', z.tuple([id, z.boolean(), z.unknown()]), (rid, ok, payload) => ctx.editor.respond(rid, ok, payload))
 
   // updates
   handle('update:state', z.tuple([]), () => ctx.updater.getState())

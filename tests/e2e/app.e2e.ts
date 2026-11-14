@@ -377,6 +377,36 @@ describe('Clavium desktop app', () => {
     await page.getByRole('button', { name: 'Deny' }).click()
     expect(JSON.stringify(await denied)).toContain('denied')
 
+    // --- the editor through MCP: open a file, change it in the editor, nothing is saved ---
+    const openedByAi = (await c.callTool({ name: 'editor_open_file', arguments: { host: HOST, path: '/readme.txt' } })) as { content: { text: string }[] }
+    expect(openedByAi.content[0].text).toContain('Opened /readme.txt')
+    expect(JSON.stringify(await c.callTool({ name: 'editor_list_open_files', arguments: {} }))).toContain('/readme.txt')
+
+    const aiEdit = c.callTool({ name: 'editor_edit_file', arguments: { host: HOST, path: '/readme.txt', old_text: 'Hello from', new_text: 'Greetings from' } })
+    await page.getByText(/AI request/).waitFor()
+    await page.getByText('- Hello from').waitFor() // the approval shows what changes
+    await page.getByRole('button', { name: 'Allow Once' }).click()
+    expect(JSON.stringify(await aiEdit)).toContain('not saved yet')
+    const viaEditor = JSON.stringify(await c.callTool({ name: 'editor_read_file', arguments: { host: HOST, path: '/readme.txt' } }))
+    expect(viaEditor).toContain('Greetings from the test server')
+    expect(viaEditor).toContain('not saved to the server')
+    expect(readFileSync(join(srv.root, 'readme.txt'), 'utf8')).toBe('Hello from the test server\n') // the server file is untouched
+
+    // the user sees the change in the editor, marked as made by an AI, and decides
+    await sidebar().locator('.side-item', { hasText: HOST }).last().click()
+    await view().getByText('An AI assistant changed this text.').waitFor()
+    expect(await view().getByLabel('Contents of readme.txt').inputValue()).toBe('Greetings from the test server\n')
+    await view().getByText('Edited').waitFor()
+    await shot('08b-ai-editor', true)
+    await view().getByRole('button', { name: 'Save', exact: true }).click()
+    await view().getByText('Saved', { exact: true }).waitFor()
+    expect(readFileSync(join(srv.root, 'readme.txt'), 'utf8')).toBe('Greetings from the test server\n')
+    expect(await view().getByText('An AI assistant changed this text.').count()).toBe(0)
+
+    // a read-only host may not change editor text
+    const roEdit = JSON.stringify(await c.callTool({ name: 'editor_edit_file', arguments: { host: 'db-01', path: '/readme.txt', old_text: 'a', new_text: 'b' } }))
+    expect(roEdit).toContain('read-only')
+
     // read-only host: commands are refused without even asking
     const refused = JSON.stringify(await c.callTool({ name: 'run_command', arguments: { host: 'db-01', command: 'id' } }))
     expect(refused).toContain('read-only')
@@ -406,7 +436,7 @@ describe('Clavium desktop app', () => {
     const msgs = out.split('\n').filter(Boolean).map((l) => JSON.parse(l))
     expect(code).toBe(0)
     expect(msgs.find((m) => m.id === 1)?.result?.serverInfo?.name).toBe('clavium')
-    expect(msgs.find((m) => m.id === 2)?.result?.tools?.length).toBe(9)
+    expect(msgs.find((m) => m.id === 2)?.result?.tools?.length).toBe(13)
   })
 
   it('shows keys, known hosts and settings, then locks the vault', async () => {

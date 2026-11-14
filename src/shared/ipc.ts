@@ -45,6 +45,7 @@ export const INVOKE_CHANNELS = [
   'fwd:stop',
   'prompt:respond',
   'audit:list',
+  'editor:respond',
   'update:state',
   'update:check',
   'update:download',
@@ -68,6 +69,7 @@ export const EVENT_CHANNELS = [
   'audit:entry',
   'fwd:changed',
   'mcp:changed',
+  'editor:request',
   'update:changed'
 ] as const
 

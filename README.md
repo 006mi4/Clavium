@@ -76,6 +76,10 @@ Clavium follows the Windows light / dark setting.
 |---|---|
 | ![AI access](docs/screenshots/07-ai-access.png) | ![AI approval](docs/screenshots/08-ai-approval-dark.png) |
 
+| AI change in the editor, waiting for your review |
+|---|
+| ![AI editor](docs/screenshots/08b-ai-editor.png) |
+
 | Host key verification | Activity log |
 |---|---|
 | ![Host key](docs/screenshots/04-host-key.png) | ![Activity](docs/screenshots/09-activity.png) |
@@ -191,6 +195,14 @@ tools to work; keep it in the tray.
 | `make_directory` | full | create a directory |
 | `rename_path` | full | rename / move |
 | `delete_path` | full | delete a file or (recursively) a directory; `/` is refused |
+| `editor_list_open_files` | – | files open in the built-in editor (shared hosts only) |
+| `editor_open_file` | read | open a remote file in your editor |
+| `editor_read_file` | read | text of an open file, including your unsaved changes |
+| `editor_edit_file` | full | change the text **in the editor only**; you review it there and save it yourself |
+
+The editor tools let an assistant work with you instead of behind your back: it can show you a file and
+propose a change in the editor, where the change is marked as made by an AI and nothing reaches the server
+until you press Save.
 
 > ⚠️ AI agents can be manipulated by content they read (prompt injection) — for example a malicious
 > file on a server. Keep approvals on for production systems and read what you approve.

@@ -98,6 +98,9 @@ export const api = {
     start: (hostId: string, fwdId: string) => call<void>('fwd:start', hostId, fwdId),
     stop: (hostId: string, fwdId: string) => call<void>('fwd:stop', hostId, fwdId)
   },
+  editor: {
+    respond: (id: string, ok: boolean, payload: unknown) => call<void>('editor:respond', id, ok, payload)
+  },
   prompt: {
     respond: (id: string, r: PromptResponse) => call<void>('prompt:respond', id, r)
   },

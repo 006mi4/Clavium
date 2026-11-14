@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  applyAiEdit,
   backspace,
   buildSearch,
   changeCase,
@@ -182,5 +183,21 @@ describe('decorations', () => {
 
   it('numbers every line for wrapped display', () => {
     expect(withLineMarkers('a\n<span class="t-c">b\nc</span>')).toBe('<b data-n="1"></b>a\n<b data-n="2"></b><span class="t-c">b\n<b data-n="3"></b>c</span>')
+  })
+})
+
+describe('edits requested by an AI client', () => {
+  it('replaces exactly one place unless told otherwise', () => {
+    expect(applyAiEdit('a = 1\nb = 2\n', { kind: 'replace', oldText: 'b = 2', newText: 'b = 3', all: false })).toEqual({ text: 'a = 1\nb = 3\n', count: 1 })
+    expect(() => applyAiEdit('x x', { kind: 'replace', oldText: 'x', newText: 'y', all: false })).toThrow(/occurs 2 times/)
+    expect(applyAiEdit('x x', { kind: 'replace', oldText: 'x', newText: 'y', all: true })).toEqual({ text: 'y y', count: 2 })
+    expect(() => applyAiEdit('abc', { kind: 'replace', oldText: 'zzz', newText: 'y', all: false })).toThrow(/not found/)
+    expect(() => applyAiEdit('abc', { kind: 'replace', oldText: '', newText: 'y', all: true })).toThrow(/empty/)
+  })
+
+  it('treats the new text literally and normalises Windows line breaks', () => {
+    expect(applyAiEdit('price', { kind: 'replace', oldText: 'price', newText: '$& $1 $$', all: false }).text).toBe('$& $1 $$')
+    expect(applyAiEdit('a\nb', { kind: 'replace', oldText: 'a\r\nb', newText: 'c\r\nd', all: false }).text).toBe('c\nd')
+    expect(applyAiEdit('old', { kind: 'all', newText: 'new\r\ntext' })).toEqual({ text: 'new\ntext', count: 1 })
   })
 })

@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowDownCircle, ArrowLeftRight, FolderOpen, History, KeyRound, Lock, Server, Settings, ShieldCheck, Sparkles, SquareTerminal, X } from 'lucide-react'
-import type { ActiveForward, HostSummary, SshKeySummary, UpdateState, VaultState } from '@shared/types'
+import type { ActiveForward, EditorFileInfo, EditorRequest, HostSummary, SshKeySummary, UpdateState, VaultState } from '@shared/types'
 import { api, on, type UiSettings } from './api'
 import { FilesView } from './components/FilesView'
+import { editorSessions } from './editor/registry'
 import { HostsPage } from './components/HostsPage'
 import { LockScreen } from './components/LockScreen'
 import { Logo } from './components/Logo'
@@ -76,11 +77,44 @@ export function App() {
     setPage(p)
     setActive('page')
   }
-  const open = (kind: Session['kind'], host: HostSummary): void => {
+  const open = (kind: Session['kind'], host: HostSummary, show = true): void => {
     const id = `${kind}-${host.id}-${Date.now()}`
     setSessions((s) => [...s, { id, kind, host, state: 'connecting', unsaved: 0 }])
-    setActive(id)
+    if (show) setActive(id)
   }
+
+  // Requests from AI clients (via the MCP server) about the files open in the editor.
+  const hostsRef = useRef(hosts)
+  hostsRef.current = hosts
+  const openRef = useRef(open)
+  openRef.current = open
+  useEffect(() => {
+    const handle = async (r: EditorRequest): Promise<unknown> => {
+      if (r.op === 'list') {
+        return editorSessions().flatMap((s): EditorFileInfo[] => s.list().map((d) => ({ hostId: s.hostId, path: d.path, name: d.name, unsaved: d.unsaved })))
+      }
+      if (r.op === 'open') {
+        if (editorSessions(r.hostId).length === 0) {
+          const host = hostsRef.current.find((h) => h.id === r.hostId)
+          if (!host) throw new Error('Host not found.')
+          openRef.current('files', host, false) // a new file session in the sidebar, without taking over the window
+          for (let i = 0; i < 50 && editorSessions(r.hostId).length === 0; i++) await new Promise((res) => setTimeout(res, 100))
+        }
+        const session = editorSessions(r.hostId)[0]
+        if (!session) throw new Error('Could not open a file session for this host.')
+        return session.open(r.path)
+      }
+      const session = editorSessions(r.hostId).find((s) => s.list().some((d) => d.path === r.path))
+      if (!session) throw new Error('This file is not open in the editor. Call editor_open_file first.')
+      return r.op === 'read' ? session.read(r.path) : session.edit(r.path, r.edit)
+    }
+    return on('editor:request', (id: string, request: EditorRequest) => {
+      handle(request).then(
+        (result) => void api.editor.respond(id, true, result ?? null),
+        (e: Error) => void api.editor.respond(id, false, e.message)
+      )
+    })
+  }, [])
   const close = async (id: string): Promise<void> => {
     const s = sessions.find((x) => x.id === id)
     if (s && s.unsaved > 0) {

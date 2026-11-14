@@ -20,7 +20,8 @@ import type { HostSummary, RemoteEntry, TransferProgress } from '@shared/types'
 import { api, on } from '../api'
 import { Empty, IconButton, Sheet, Toolbar, formatBytes, formatDate, useConfirm, useMenu, useToast, type MenuItem } from '../ui'
 import { StatusDot, type ConnState } from './TerminalView'
-import { EditorWorkspace } from './EditorWorkspace'
+import { registerEditorSession } from '../editor/registry'
+import { EditorWorkspace, type WorkspaceApi } from './EditorWorkspace'
 
 function parentOf(p: string): string {
   if (p === '/' || !p.includes('/')) return '/'
@@ -73,6 +74,45 @@ export function FilesView(props: {
     setRequest({ entry, nonce: Date.now() })
     setMode('editor')
   }
+  const workspaceApi = useRef<WorkspaceApi | null>(null)
+
+  // make this session's editor reachable for AI clients (through the MCP server)
+  useEffect(() => {
+    const wait = async <T,>(what: () => T | undefined, ms: number, message: string): Promise<T> => {
+      const until = Date.now() + ms
+      for (;;) {
+        const v = what()
+        if (v !== undefined) return v
+        if (Date.now() > until) throw new Error(message)
+        await new Promise((r) => setTimeout(r, 100))
+      }
+    }
+    return registerEditorSession({
+      hostId: props.host.id,
+      list: () => (workspaceApi.current?.list() ?? []).filter((d) => d.status === 'ready'),
+      read: (path) => {
+        if (!workspaceApi.current) throw new Error('This file is not open in the editor. Call editor_open_file first.')
+        return workspaceApi.current.read(path)
+      },
+      edit: (path, e) => {
+        if (!workspaceApi.current) throw new Error('This file is not open in the editor. Call editor_open_file first.')
+        return workspaceApi.current.edit(path, e)
+      },
+      open: async (path) => {
+        const id = await wait(() => sidRef.current ?? undefined, 30_000, 'Could not connect to the host.')
+        const already = workspaceApi.current?.list().find((d) => d.path === path)
+        const st = await api.files.stat(id, path)
+        if (st.type === 'dir') throw new Error('This is a folder, not a file.')
+        if (!already) edit({ ...st, path })
+        const doc = await wait(
+          () => workspaceApi.current?.list().find((d) => d.path === path && d.status !== 'loading'),
+          30_000,
+          'The file did not open in time.'
+        )
+        if (doc.status === 'error') throw new Error(doc.error ?? 'The file could not be opened.')
+      }
+    })
+  }, [props.host.id])
   const lastClicked = useRef<number>(-1)
   const sidRef = useRef<string | null>(null)
   const cwdRef = useRef('')
@@ -259,6 +299,7 @@ export function FilesView(props: {
           sid={sid}
           visible={mode === 'editor'}
           request={request}
+          api={workspaceApi}
           onBack={() => setMode('list')}
           onReconnect={() => setAttempt((a) => a + 1)}
           onSaved={() => void load(cwdRef.current)}

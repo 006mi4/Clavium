@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type WheelEvent } from 'react'
-import { ChevronLeft, ClipboardCopy, Columns2, Download, Keyboard, MoreHorizontal, Replace, RotateCw, Save, SaveAll, Search, WrapText, X, XCircle } from 'lucide-react'
-import type { RemoteEntry, TextFile } from '@shared/types'
+import { ChevronLeft, ClipboardCopy, Sparkles, Columns2, Download, Keyboard, MoreHorizontal, Replace, RotateCw, Save, SaveAll, Search, WrapText, X, XCircle } from 'lucide-react'
+import type { EditorEdit, RemoteEntry, TextFile } from '@shared/types'
 import { api } from '../api'
-import { indentUnit } from '../editor/commands'
+import { applyAiEdit, indentUnit } from '../editor/commands'
 import { detectLanguage } from '../editor/highlight'
 import { IconButton, Note, Sheet, Toolbar, useConfirm, useMenu, useToast, type MenuItem } from '../ui'
 import { EditorPane, type EditorPaneHandle } from './EditorPane'
@@ -22,6 +22,15 @@ interface Doc {
   /** the file changed on the server since it was opened */
   stale?: boolean
   saving?: boolean
+  /** an AI client changed the text and the user has not saved or reloaded since */
+  aiEdited?: boolean
+}
+
+/** What the workspace offers to AI clients (see editor/registry.ts). */
+export interface WorkspaceApi {
+  list(): { path: string; name: string; unsaved: boolean; status: Doc['status']; error?: string }[]
+  read(path: string): { text: string; unsaved: boolean }
+  edit(path: string, edit: EditorEdit): number
 }
 
 interface Pane {
@@ -90,6 +99,8 @@ export function EditorWorkspace(props: {
   onDownload: (path: string, name: string) => void
   /** reports open and unsaved file counts to the owner */
   onState: (open: number, unsaved: number) => void
+  /** filled with the functions AI clients may call */
+  api: { current: WorkspaceApi | null }
 }) {
   const toast = useToast()
   const confirm = useConfirm()
@@ -114,6 +125,34 @@ export function EditorWorkspace(props: {
 
   useEffect(() => props.onState(openCount, unsaved), [openCount, unsaved])
 
+  // functions for AI clients; they always see the latest text through docsRef
+  useEffect(() => {
+    const ready = (path: string): Doc => {
+      const d = docsRef.current[path]
+      if (!d) throw new Error('This file is not open in the editor. Call editor_open_file first.')
+      if (d.status !== 'ready') throw new Error(d.status === 'loading' ? 'The file is still loading.' : (d.error ?? 'The file could not be opened.'))
+      return d
+    }
+    props.api.current = {
+      list: () => Object.values(docsRef.current).map((d) => ({ path: d.path, name: d.name, unsaved: isDirty(d), status: d.status, error: d.error })),
+      read: (path) => {
+        const d = ready(path)
+        return { text: d.text, unsaved: isDirty(d) }
+      },
+      edit: (path, e) => {
+        const d = ready(path)
+        const r = applyAiEdit(d.text, e)
+        // docsRef is updated right away so that several edits in a row build on each other
+        docsRef.current = { ...docsRef.current, [path]: { ...d, text: r.text, aiEdited: true } }
+        patch(path, { text: r.text, aiEdited: true })
+        return r.count
+      }
+    }
+    return () => {
+      props.api.current = null
+    }
+  }, [])
+
   const patch = (path: string, p: Partial<Doc>): void => setDocs((d) => (d[path] ? { ...d, [path]: { ...d[path], ...p } } : d))
 
   const load = useCallback(async (path: string): Promise<void> => {
@@ -122,7 +161,7 @@ export function EditorWorkspace(props: {
     patch(path, { status: 'loading', error: undefined })
     try {
       const f = await api.files.readText(sid, path)
-      patch(path, { status: 'ready', text: f.text, savedText: f.text, meta: { eol: f.eol, bom: f.bom, version: f.version }, stale: false })
+      patch(path, { status: 'ready', text: f.text, savedText: f.text, meta: { eol: f.eol, bom: f.bom, version: f.version }, stale: false, aiEdited: false })
     } catch (e) {
       patch(path, { status: 'error', error: (e as Error).message })
     }
@@ -161,7 +200,7 @@ export function EditorWorkspace(props: {
       const textNow = d.text
       const r = await api.files.writeText(sid, path, { text: textNow, eol: d.meta.eol, bom: d.meta.bom }, d.meta.version, force)
       if (r.saved) {
-        patch(path, { savedText: textNow, meta: { ...d.meta, version: r.version }, stale: false, saving: false })
+        patch(path, { savedText: textNow, meta: { ...d.meta, version: r.version }, stale: false, saving: false, aiEdited: false })
         props.onSaved()
         return true
       }
@@ -436,6 +475,19 @@ export function EditorWorkspace(props: {
                         Reload
                       </button>{' '}
                       to see the new version{isDirty(doc) ? '; your unsaved changes would be lost' : ''}.
+                    </Note>
+                  </div>
+                )}
+
+                {doc?.aiEdited && doc.status === 'ready' && (
+                  <div style={{ padding: '8px 12px 0' }}>
+                    <Note>
+                      <Sparkles size={13} style={{ verticalAlign: -2, marginRight: 4 }} />
+                      An AI assistant changed this text. Nothing is saved yet: review it, then save, or{' '}
+                      <button className="link" onClick={() => void reload(doc.path)}>
+                        reload
+                      </button>{' '}
+                      to discard the changes.
                     </Note>
                   </div>
                 )}

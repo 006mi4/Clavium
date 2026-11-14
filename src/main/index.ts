@@ -15,6 +15,7 @@ import type { EventChannel } from '@shared/ipc'
 import { AuditLog } from './core/audit'
 import { SettingsStore } from './core/settings'
 import { Vault } from './core/vault'
+import { WindowEditorBridge } from './editorBridge'
 import { FileManager } from './files'
 import { ForwardManager } from './forwards'
 import { registerIpc } from './ipc'
@@ -81,7 +82,9 @@ function runApp(): void {
   const terminals = new TerminalManager(vault, prompter, send)
   const files = new FileManager(vault, prompter, send)
   const forwards = new ForwardManager(vault, prompter, () => send('fwd:changed'))
+  const editor = new WindowEditorBridge(getWindow)
   const mcp = new McpController({
+    editor,
     vault,
     settings,
     prompter,
@@ -220,7 +223,7 @@ function runApp(): void {
     session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false))
     session.defaultSession.setPermissionCheckHandler(() => false)
 
-    registerIpc({ window: getWindow, vault, settings, audit, prompter, mcp, terminals, files, forwards, updater })
+    registerIpc({ window: getWindow, vault, settings, audit, prompter, mcp, terminals, files, forwards, updater, editor })
     createWindow()
 
     if (existsSync(iconPath)) {

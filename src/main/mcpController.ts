@@ -3,7 +3,7 @@ import type { McpStatus } from '@shared/types'
 import type { AuditLog } from './core/audit'
 import { randomToken, sha256Hex } from './core/crypto'
 import { McpHttpServer } from './core/mcp/http'
-import { McpService } from './core/mcp/service'
+import { McpService, type EditorBridge } from './core/mcp/service'
 import type { Prompter } from './core/prompter'
 import type { SettingsStore } from './core/settings'
 import type { Vault } from './core/vault'
@@ -14,6 +14,7 @@ export interface McpControllerDeps {
   prompter: Prompter
   audit: AuditLog
   version: string
+  editor?: EditorBridge
   /** Path of the installed stdio bridge (clavium-mcp.exe). */
   bridgePath: string
   onChange: () => void
@@ -25,7 +26,7 @@ export class McpController {
   private lastError?: string
 
   constructor(private readonly deps: McpControllerDeps) {
-    this.service = new McpService({ vault: deps.vault, prompter: deps.prompter, audit: deps.audit, version: deps.version })
+    this.service = new McpService({ vault: deps.vault, prompter: deps.prompter, audit: deps.audit, version: deps.version, editor: deps.editor })
     this.http = new McpHttpServer({ vault: deps.vault, service: this.service, settings: () => deps.settings.get() })
   }
 
