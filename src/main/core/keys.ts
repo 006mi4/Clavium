@@ -22,9 +22,13 @@ export function keyTypeOf(blob: Buffer): string {
 export function buildKeyRecord(name: string, privateKey: string, passphrase?: string): SshKeyRecord {
   const parsed = utils.parseKey(privateKey, passphrase || undefined)
   if (parsed instanceof Error) {
+    // A wrong passphrase decrypts to garbage, which the parser reports in varying ways
+    // ("bad passphrase", "malformed key", ...). With a passphrase given, that is the likely cause.
     const msg = /passphrase|encrypted/i.test(parsed.message)
       ? 'The key is encrypted: wrong or missing passphrase'
-      : `Unsupported or invalid private key: ${parsed.message}`
+      : passphrase
+        ? 'Wrong passphrase, or the key is damaged'
+        : `Unsupported or invalid private key: ${parsed.message}`
     throw new Error(msg)
   }
   const key = Array.isArray(parsed) ? parsed[0] : parsed
@@ -53,11 +57,18 @@ export function generateKey(name: string, type: 'ed25519' | 'ecdsa' | 'rsa', pas
     opts.rounds = 64
   }
   // ssh2 typings are narrower than what generateKeyPairSync accepts at runtime
-  const pair = (utils.generateKeyPairSync as (t: string, o: unknown) => { private: string; public: string })(
-    type,
-    opts
-  )
-  return buildKeyRecord(comment, pair.private, passphrase)
+  const generate = utils.generateKeyPairSync as (t: string, o: unknown) => { private: string; public: string }
+  // A freshly generated key is read back before it is stored. Should that ever fail, a new key is
+  // generated instead of handing the user an error about a key they never saw.
+  let lastError: unknown
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return buildKeyRecord(comment, generate(type, opts).private, passphrase)
+    } catch (e) {
+      lastError = e
+    }
+  }
+  throw new Error(`Could not generate a usable key: ${(lastError as Error).message}`)
 }
 
 export function summarizeKey(k: SshKeyRecord): SshKeySummary {

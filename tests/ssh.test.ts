@@ -103,7 +103,9 @@ describe('keys', () => {
     const k = generateKey('laptop', 'ed25519', 'pass phrase')
     expect(k.type).toBe('ssh-ed25519')
     expect(k.publicKey.startsWith('ssh-ed25519 ')).toBe(true)
-    expect(() => buildKeyRecord('x', k.privateKey, 'wrong')).toThrow(/passphrase/)
+    // a wrong passphrase fails in different ways inside the parser; the message must always say so
+    for (let i = 0; i < 3; i++) expect(() => buildKeyRecord('x', k.privateKey, `wrong-${i}`)).toThrow(/passphrase/i)
+    expect(() => buildKeyRecord('x', 'not a key at all')).toThrow(/Unsupported or invalid/)
     expect(buildKeyRecord('x', k.privateKey, 'pass phrase').fingerprint).toBe(k.fingerprint)
   })
 })
