@@ -74,11 +74,20 @@ function runApp(): void {
   let quitting = false
 
   const getWindow = (): BrowserWindow | null => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null)
+  const iconPath = app.isPackaged ? join(process.resourcesPath, 'icon.png') : join(app.getAppPath(), 'resources', 'icon.png')
+
+  // Windows shows notifications under the name and icon of the app this ID belongs to. The
+  // installer registers the ID below with the Start menu shortcut. Without an installed shortcut
+  // (portable build, development) Windows shows the ID text itself, so the plain name is used.
+  if (process.platform === 'win32') {
+    const installed = app.isPackaged && !process.env.PORTABLE_EXECUTABLE_FILE
+    app.setAppUserModelId(installed ? 'io.github.clavium.desktop' : 'Clavium')
+  }
+  const prompter = new UiPrompter(getWindow, iconPath, !process.env.CLAVIUM_NO_NOTIFICATIONS || app.isPackaged)
   const send = (channel: EventChannel, ...args: unknown[]): void => {
     getWindow()?.webContents.send(channel, ...args)
   }
 
-  const prompter = new UiPrompter(getWindow)
   const terminals = new TerminalManager(vault, prompter, send)
   const files = new FileManager(vault, prompter, send)
   const forwards = new ForwardManager(vault, prompter, () => send('fwd:changed'))
@@ -127,9 +136,6 @@ function runApp(): void {
   })
 
   // ---- window ----------------------------------------------------------
-  const iconPath = app.isPackaged
-    ? join(process.resourcesPath, 'icon.png')
-    : join(app.getAppPath(), 'resources', 'icon.png')
 
   // Window chrome follows the system appearance (light / dark). Keep in sync with --bg in styles.css.
   const chrome = (): { bg: string; symbols: string } =>

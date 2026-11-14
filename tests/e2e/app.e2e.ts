@@ -70,7 +70,7 @@ beforeAll(async () => {
     executablePath: electronPath,
     args: ['.'],
     cwd: root,
-    env: { ...process.env, CLAVIUM_DATA_DIR: dataDir, ELECTRON_RENDERER_URL: '' }
+    env: { ...process.env, CLAVIUM_DATA_DIR: dataDir, CLAVIUM_NO_NOTIFICATIONS: '1', ELECTRON_RENDERER_URL: '' }
   })
   page = await app.firstWindow()
   await page.setViewportSize({ width: 1280, height: 800 })
