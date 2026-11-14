@@ -1,0 +1,211 @@
+import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { request } from 'node:http'
+import { resolve } from 'node:path'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { DEFAULT_SETTINGS } from '@shared/types'
+import { AuditLog } from '../src/main/core/audit'
+import { sha256Hex } from '../src/main/core/crypto'
+import { McpHttpServer } from '../src/main/core/mcp/http'
+import { McpService } from '../src/main/core/mcp/service'
+import type { Vault } from '../src/main/core/vault'
+import { MASTER, newUnlockedVault, recordingPrompter, sshHost, type RecordingPrompter } from './helpers/fixtures'
+import { startTestSshServer, type TestSshServer } from './helpers/testServer'
+import { join } from 'node:path'
+
+const TOKEN = 'clv_test-token-0123456789'
+const BRIDGE_EXE = resolve(__dirname, '../resources/bin/clavium-mcp.exe')
+let srv: TestSshServer
+let vault: Vault
+let prompter: RecordingPrompter
+let audit: AuditLog
+let service: McpService
+let http: McpHttpServer
+let port: number
+
+async function client(token = TOKEN): Promise<Client> {
+  const c = new Client({ name: 'test', version: '1.0.0' })
+  await c.connect(
+    new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
+      requestInit: { headers: { Authorization: `Bearer ${token}` } }
+    })
+  )
+  return c
+}
+
+function textOf(r: unknown): string {
+  return ((r as { content: { text: string }[] }).content[0]?.text ?? '') as string
+}
+
+function rawPost(headers: Record<string, string>): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const req = request(
+      { host: '127.0.0.1', port, path: '/mcp', method: 'POST', headers: { 'content-type': 'application/json', ...headers } },
+      (res) => {
+        res.resume()
+        resolve(res.statusCode ?? 0)
+      }
+    )
+    req.on('error', reject)
+    req.end(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }))
+  })
+}
+
+beforeAll(async () => {
+  srv = await startTestSshServer()
+  const v = await newUnlockedVault()
+  vault = v.vault
+  audit = new AuditLog(join(v.dir, 'audit.log'))
+  prompter = recordingPrompter()
+  await vault.update((d) => {
+    d.mcpToken = TOKEN
+    d.hosts.push(sshHost(srv.port))
+    d.hosts.push(sshHost(srv.port, { id: 'h2', name: 'readonly-box', aiAccess: 'read', aiConfirm: 'none' }))
+    d.hosts.push(sshHost(srv.port, { id: 'h3', name: 'secret-box', aiAccess: 'none' }))
+  })
+  // Pre-trust the host key: AI sessions never get to accept unknown keys silently.
+  const { connectSsh } = await import('../src/main/core/ssh')
+  ;(await connectSsh(sshHost(srv.port), { vault, prompter, interactive: true })).end()
+  service = new McpService({ vault, prompter, audit, version: 'test' })
+  http = new McpHttpServer({
+    vault,
+    service,
+    settings: () => ({ ...DEFAULT_SETTINGS, mcpTokenHash: sha256Hex(TOKEN) })
+  })
+  port = 40000 + Math.floor(Math.random() * 20000)
+  await http.start(port)
+})
+
+afterAll(async () => {
+  service.shutdown()
+  await http.stop()
+  await srv.close()
+})
+
+beforeEach(() => {
+  prompter.allow = true
+  prompter.confirmCalls = []
+})
+
+describe('MCP HTTP security', () => {
+  it('rejects missing/wrong tokens, browser origins and foreign Host headers', async () => {
+    expect(await rawPost({})).toBe(401)
+    expect(await rawPost({ authorization: 'Bearer nope' })).toBe(401)
+    expect(await rawPost({ authorization: `Bearer ${TOKEN}`, origin: 'https://evil.example' })).toBe(403)
+    expect(await rawPost({ authorization: `Bearer ${TOKEN}`, host: `evil.example:${port}` })).toBe(403)
+    await expect(client('wrong-token')).rejects.toThrow()
+  })
+})
+
+describe('MCP tools', () => {
+  it('lists only hosts shared with AI', async () => {
+    const c = await client()
+    const tools = await c.listTools()
+    expect(tools.tools.map((t) => t.name).sort()).toEqual(
+      ['delete_path', 'file_info', 'list_directory', 'list_hosts', 'make_directory', 'read_file', 'rename_path', 'run_command', 'write_file'].sort()
+    )
+    const hosts = JSON.parse(textOf(await c.callTool({ name: 'list_hosts', arguments: {} })))
+    expect(hosts.map((h: { name: string }) => h.name)).toEqual(['test-box', 'readonly-box'])
+    expect(JSON.stringify(hosts)).not.toContain('correct horse')
+    await c.close()
+  })
+
+  it('runs commands only after confirmation', async () => {
+    const c = await client()
+    const ok = await c.callTool({ name: 'run_command', arguments: { host: 'test-box', command: 'whoami' } })
+    expect(textOf(ok)).toContain('ran: whoami')
+    expect(textOf(ok)).toContain('exit_code: 3')
+    expect(prompter.confirmCalls).toEqual([{ tool: 'run_command', detail: 'whoami' }])
+
+    prompter.allow = false
+    const denied = await c.callTool({ name: 'run_command', arguments: { host: 'test-box', command: 'rm -rf /' } })
+    expect(denied.isError).toBe(true)
+    expect(textOf(denied)).toMatch(/denied/)
+    await c.close()
+  })
+
+  it('enforces read-only and hidden hosts', async () => {
+    const c = await client()
+    const r = await c.callTool({ name: 'run_command', arguments: { host: 'readonly-box', command: 'id' } })
+    expect(r.isError).toBe(true)
+    expect(textOf(r)).toMatch(/read-only/)
+    const hidden = await c.callTool({ name: 'list_directory', arguments: { host: 'secret-box' } })
+    expect(textOf(hidden)).toMatch(/Unknown host/)
+    const ls = await c.callTool({ name: 'list_directory', arguments: { host: 'readonly-box', path: '/' } })
+    expect(ls.isError).toBeFalsy()
+    expect(prompter.confirmCalls).toHaveLength(0) // read-only host with confirmation "none"
+    await c.close()
+  })
+
+  it('writes, reads and deletes files; refuses deleting /', async () => {
+    const c = await client()
+    await c.callTool({ name: 'write_file', arguments: { host: 'h1', path: '/notes.txt', content: 'hi from ai' } })
+    const read = await c.callTool({ name: 'read_file', arguments: { host: 'h1', path: '/notes.txt' } })
+    expect(textOf(read)).toBe('hi from ai')
+    const again = await c.callTool({ name: 'write_file', arguments: { host: 'h1', path: '/notes.txt', content: 'x' } })
+    expect(again.isError).toBe(true)
+    const root = await c.callTool({ name: 'delete_path', arguments: { host: 'h1', path: '/', recursive: true } })
+    expect(textOf(root)).toMatch(/Refusing/)
+    const del = await c.callTool({ name: 'delete_path', arguments: { host: 'h1', path: '/notes.txt' } })
+    expect(del.isError).toBeFalsy()
+    const log = await audit.recent()
+    expect(log.some((e) => e.action === 'delete_path' && e.result === 'ok')).toBe(true)
+    await c.close()
+  })
+
+  it('refuses tool use while the vault is locked but still authenticates via the token hash', async () => {
+    vault.lock()
+    try {
+      const c = await client()
+      const r = await c.callTool({ name: 'list_hosts', arguments: {} })
+      expect(textOf(r)).toMatch(/locked/)
+      await c.close()
+    } finally {
+      await vault.unlock(MASTER)
+    }
+  })
+
+  it.runIf(process.platform === 'win32' && existsSync(BRIDGE_EXE))('works through the stdio bridge (clavium-mcp.exe)', async () => {
+    const child = spawn(BRIDGE_EXE, [], {
+      env: { ...process.env, CLAVIUM_MCP_TOKEN: TOKEN, CLAVIUM_MCP_URL: `http://127.0.0.1:${port}/mcp` },
+      stdio: ['pipe', 'pipe', 'pipe']
+    })
+    let out = ''
+    child.stdout.on('data', (d: Buffer) => (out += d.toString('utf8')))
+    const input = child.stdin
+    input.write(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'bridge-test', version: '1' } }
+      }) + '\n'
+    )
+    input.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n')
+    input.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }) + '\n')
+    input.write(JSON.stringify({ jsonrpc: '2.0', id: 'call-3', method: 'tools/call', params: { name: 'run_command', arguments: { host: 'test-box', command: 'echo bridged' } } }) + '\n')
+    input.end()
+    const code = await new Promise<number | null>((r) => child.on('exit', r))
+    expect(code).toBe(0)
+    // stdout must contain nothing but JSON-RPC lines
+    const msgs = out.split('\n').filter(Boolean).map((l) => JSON.parse(l))
+    expect(msgs.find((m) => m.id === 1).result.serverInfo.name).toBe('clavium')
+    expect(msgs.find((m) => m.id === 2).result.tools.length).toBe(9)
+    expect(JSON.stringify(msgs.find((m) => m.id === 'call-3'))).toContain('ran: echo bridged')
+
+    // wrong token: the 401 reply is mapped back onto the request id
+    const bad = spawn(BRIDGE_EXE, [], {
+      env: { ...process.env, CLAVIUM_MCP_TOKEN: 'nope', CLAVIUM_MCP_URL: `http://127.0.0.1:${port}/mcp` },
+      stdio: ['pipe', 'pipe', 'pipe']
+    })
+    let badOut = ''
+    bad.stdout.on('data', (d: Buffer) => (badOut += d.toString('utf8')))
+    bad.stdin.end(JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/list' }) + '\n')
+    await new Promise((r) => bad.on('exit', r))
+    const err = JSON.parse(badOut.trim())
+    expect(err.id).toBe(7)
+    expect(err.error.message).toMatch(/Unauthorized/)
+  })
+})

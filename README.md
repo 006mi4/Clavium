@@ -1,0 +1,211 @@
+<p align="center">
+  <img src="build/icon.png" width="96" alt="Clavium logo" />
+</p>
+
+<h1 align="center">Clavium</h1>
+
+<p align="center">
+  Open-source SSH, SFTP and FTP(S) client for Windows — with an encrypted vault and a built-in,
+  permission-gated <b>MCP server</b> so Claude and Codex can work on your servers, only where and how you allow it.
+</p>
+
+<p align="center">
+  <a href="https://github.com/006mi4/Clavium/releases/latest"><b>Download for Windows</b></a> ·
+  <a href="#ai-access-mcp">AI / MCP setup</a> ·
+  <a href="SECURITY.md">Security</a> ·
+  <a href="#deutsch">Deutsch</a>
+</p>
+
+![Terminal](docs/screenshots/05-terminal.png)
+
+*Clavium* comes from Latin *clavis* — "key".
+
+## Features
+
+- **SSH terminal** with tabs (xterm.js, 256 colours, copy/paste, resize), password, key, SSH agent
+  (Windows OpenSSH agent / Pageant) and keyboard-interactive / 2FA logins
+- **SFTP file manager**: browse, upload (files, folders, drag & drop), download, rename, delete, new folder,
+  transfer progress
+- **FTPS** (explicit and implicit TLS) and plain FTP (clearly marked as unencrypted)
+- **Port forwarding** (`ssh -L` style tunnels, bound to 127.0.0.1 only)
+- **Keychain**: generate Ed25519 / ECDSA / RSA-4096 keys or import existing ones (with passphrase)
+- **Known hosts** with trust-on-first-use and loud warnings when a server key changes
+- **Encrypted vault** (scrypt + AES-256-GCM) for all hosts, passwords and keys, auto-lock, lock on Windows lock
+- **MCP server for AI clients** (Claude Code, Claude Desktop, Codex, any MCP client) with per-host access
+  levels, approval dialogs and an activity log
+- Tray mode, installer and portable `.exe`
+
+| Hosts | SFTP | AI approval |
+|---|---|---|
+| ![Hosts](docs/screenshots/03-hosts.png) | ![SFTP](docs/screenshots/06-sftp.png) | ![AI approval](docs/screenshots/08-ai-approval.png) |
+
+## Download & install
+
+Get the latest version from **[Releases](https://github.com/006mi4/Clavium/releases/latest)**:
+
+| File | What it is |
+|---|---|
+| `Clavium-Setup-x.y.z.exe` | Installer (per user, no admin rights needed), start menu + desktop shortcut |
+| `Clavium-x.y.z-portable.exe` | Single exe, no installation |
+| `SHA256SUMS.txt` | Checksums of both files |
+
+**Windows SmartScreen:** Clavium is open source and its releases are not signed with a paid
+code-signing certificate, so Windows may show *"Windows protected your PC"* on the first start.
+Click **More info → Run anyway**. Instead of trusting us blindly, you can verify the download:
+
+```powershell
+# 1. compare with SHA256SUMS.txt from the same release
+Get-FileHash .\Clavium-Setup-0.1.0.exe -Algorithm SHA256
+
+# 2. verify it was built by this repository's GitHub Actions workflow (GitHub CLI)
+gh attestation verify .\Clavium-Setup-0.1.0.exe --repo 006mi4/Clavium
+```
+
+Every release is built from the tagged source by [`.github/workflows/release.yml`](.github/workflows/release.yml)
+— nothing is built on a developer machine.
+
+## AI access (MCP)
+
+Clavium contains an [MCP](https://modelcontextprotocol.io) server. When you enable it, AI assistants can
+list your shared servers, run commands and work with files — **but only on hosts you explicitly share**:
+
+| Access level | Allowed |
+|---|---|
+| **Off** (default) | Host is invisible to the AI |
+| **Read** | list directories, read files, file info — never commands |
+| **Full** | additionally run commands, write, rename, delete |
+
+For every shared host you also choose when Clavium asks you first: **every action**, **commands & changes**
+(default) or **never**. Approval dialogs show exactly what will be executed and auto-deny after 120 s.
+
+### Setup
+
+1. Clavium → **AI / MCP** → switch the MCP server on.
+2. Edit a host → *AI access* → choose *Read* or *Full*.
+3. Click **Show configuration**, pick your client and copy the snippet:
+
+**Claude Code** (one command, available in all projects):
+
+```bash
+claude mcp add --scope user --transport http clavium http://127.0.0.1:47821/mcp --header "Authorization: Bearer clv_…"
+```
+
+**Claude Desktop** (`claude_desktop_config.json`, via Settings → Developer → Edit Config):
+
+```json
+{
+  "mcpServers": {
+    "clavium": {
+      "command": "C:\\Users\\you\\AppData\\Roaming\\Clavium\\bin\\clavium-mcp.exe",
+      "args": [],
+      "env": { "CLAVIUM_MCP_TOKEN": "clv_…" }
+    }
+  }
+}
+```
+
+**Codex** (`%USERPROFILE%\.codex\config.toml`):
+
+```toml
+[mcp_servers.clavium]
+command = "C:\\Users\\you\\AppData\\Roaming\\Clavium\\bin\\clavium-mcp.exe"
+args = []
+env = { CLAVIUM_MCP_TOKEN = "clv_…" }
+tool_timeout_sec = 180
+```
+
+`clavium-mcp.exe` is a tiny stdio ↔ HTTP bridge (C#, source in [`bridge/`](bridge/ClaviumMcpBridge.cs))
+for clients that only speak stdio. It starts Clavium if it is not running. Clavium must be **unlocked** for
+tools to work; keep it in the tray.
+
+### Tools
+
+| Tool | Access | Description |
+|---|---|---|
+| `list_hosts` | – | hosts shared with AI and their access level |
+| `run_command` | full, SSH | run a non-interactive command (timeout, 100 KiB output cap) |
+| `list_directory` | read | list a remote directory |
+| `file_info` | read | type, size, permissions, mtime |
+| `read_file` | read | read a text file (≤ 2 MiB) |
+| `write_file` | full | create / overwrite a text file (≤ 2 MiB) |
+| `make_directory` | full | create a directory |
+| `rename_path` | full | rename / move |
+| `delete_path` | full | delete a file or (recursively) a directory; `/` is refused |
+
+> ⚠️ AI agents can be manipulated by content they read (prompt injection) — for example a malicious
+> file on a server. Keep approvals on for production systems and read what you approve.
+
+## Security
+
+Short version — details and threat model in [SECURITY.md](SECURITY.md):
+
+- **Vault:** scrypt (N=2¹⁷, r=8, p=1) → AES-256-GCM, header authenticated, atomic writes, key wiped on lock,
+  brute-force throttling. No password recovery, no cloud, no telemetry.
+- **SSH:** modern algorithms only (Ed25519/ECDSA/RSA-SHA2, curve25519, AES-GCM/CTR, ETM MACs); legacy SHA-1
+  only per host on request. Host keys pinned (TOFU); changed keys are refused for AI sessions and shown as a
+  big warning to you. Agent forwarding is never enabled.
+- **FTPS:** TLS ≥ 1.2, certificate validated before the password is sent; self-signed certificates only after
+  you pinned their fingerprint.
+- **MCP:** listens on 127.0.0.1 only, random 256-bit bearer token (constant-time compare, rate limited),
+  requests with a browser `Origin` or a foreign `Host` header are rejected (CSRF / DNS rebinding). The AI never
+  sees passwords or keys. Everything is logged in *Activity*.
+- **Electron:** context isolation, sandboxed renderer, no Node in the renderer, strict CSP, all IPC validated
+  with zod and restricted to the app window, navigation/new windows blocked, permissions denied, fuses
+  (`RunAsNode`, `NODE_OPTIONS`, `--inspect` off, ASAR integrity on).
+
+## Build from source
+
+Requirements: Windows 10/11, Node.js 24, Git. (The MCP bridge is compiled with the C# compiler that ships with
+Windows — no extra SDK.)
+
+```bash
+git clone https://github.com/006mi4/Clavium.git
+cd Clavium
+npm ci
+npm run dev        # start in development mode
+npm test           # unit + integration tests (local SSH/SFTP test server, MCP, bridge)
+npm run test:e2e   # drives the real Electron app with Playwright
+npm run dist       # build dist/Clavium-Setup-x.y.z.exe and dist/Clavium-x.y.z-portable.exe
+```
+
+Project layout:
+
+```
+src/main/core/      vault, SSH, SFTP/FTP, host keys, MCP server (Electron-free, unit tested)
+src/main/           Electron glue: window, IPC, terminals, transfers, tray, auto-lock
+src/preload/        minimal allow-listed bridge to the renderer
+src/renderer/       React UI
+bridge/             clavium-mcp.exe (stdio bridge, C#)
+tests/              vitest tests incl. an in-process SSH/SFTP server; tests/e2e drives the app
+```
+
+## Roadmap
+
+Jump hosts / ProxyJump · snippets · split panes · macOS & Linux builds · auto-update · German UI ·
+encrypted vault export/import · SFTP editing in an external editor
+
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+[MIT](LICENSE)
+
+---
+
+## Deutsch
+
+**Clavium** ist ein kostenloser Open-Source-Client für Windows, um sich per **SSH, SFTP und FTP(S)** mit
+Servern zu verbinden — ähnlich wie Termius. Alle Zugangsdaten liegen in einem mit Master-Passwort
+verschlüsselten Tresor auf deinem Rechner (keine Cloud, keine Telemetrie).
+
+Zusätzlich enthält Clavium einen **MCP-Server**, über den **Claude** (Code/Desktop) und **Codex** deine
+Server nutzen können — aber nur Hosts, die du freigibst, nur mit den Rechten, die du festlegst
+(*Lesen* oder *Voll*), und standardmäßig erst nach deiner Bestätigung pro Befehl.
+
+**Installation:** Unter [Releases](https://github.com/006mi4/Clavium/releases/latest) `Clavium-Setup-x.y.z.exe`
+(Installer) oder `Clavium-x.y.z-portable.exe` herunterladen. Da die Datei nicht kostenpflichtig signiert ist,
+zeigt Windows evtl. „Der Computer wurde durch Windows geschützt" → **Weitere Informationen → Trotzdem
+ausführen**. Die Echtheit lässt sich mit `SHA256SUMS.txt` bzw. `gh attestation verify` prüfen (siehe oben).
+
+**KI einrichten:** Clavium → *AI / MCP* → Server einschalten → bei einem Host *AI access* auf *Read* oder
+*Full* stellen → *Show configuration* → Snippet für Claude Code, Claude Desktop oder Codex kopieren.

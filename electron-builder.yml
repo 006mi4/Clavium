@@ -1,0 +1,61 @@
+appId: io.github.clavium.desktop
+productName: Clavium
+copyright: Copyright © 2026 Clavium contributors
+
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - out/**
+  - package.json
+  - "!**/*.map"
+  # ssh2's optional native helpers are compiled for Node.js, not Electron; ssh2 falls back to pure JS.
+  - "!node_modules/ssh2/lib/protocol/crypto/build/**"
+  - "!node_modules/cpu-features/**"
+
+asarUnpack:
+  # Pageant helper used by ssh2 for agent authentication must be executable from disk.
+  - node_modules/ssh2/util/pagent.exe
+
+extraResources:
+  - from: resources/icon.png
+    to: icon.png
+  - from: resources/bin/clavium-mcp.exe
+    to: bin/clavium-mcp.exe
+
+npmRebuild: false
+
+# Electron hardening (https://www.electronjs.org/docs/latest/tutorial/fuses)
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  # No code-signing certificate (open-source build). Windows SmartScreen may warn on first start.
+  signAndEditExecutable: true
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Clavium
+  deleteAppDataOnUninstall: false
+  artifactName: Clavium-Setup-${version}.${ext}
+
+portable:
+  artifactName: Clavium-${version}-portable.${ext}
+
+publish: null

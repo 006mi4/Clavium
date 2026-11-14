@@ -1,0 +1,54 @@
+{
+  "name": "clavium",
+  "productName": "Clavium",
+  "version": "0.1.0",
+  "description": "Open-source SSH, SFTP and FTP(S) client with an encrypted vault and a built-in, permission-gated MCP server for Claude and Codex.",
+  "license": "MIT",
+  "author": "Clavium contributors",
+  "homepage": "https://github.com/006mi4/Clavium",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/006mi4/Clavium.git"
+  },
+  "bugs": {
+    "url": "https://github.com/006mi4/Clavium/issues"
+  },
+  "main": "out/main/index.js",
+  "private": true,
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "node scripts/build-bridge.mjs && electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "vitest run",
+    "test:e2e": "electron-vite build && vitest run -c vitest.e2e.config.mts",
+    "icon": "node scripts/make-icon.mjs",
+    "dist": "npm run typecheck && npm run build && electron-builder --win --publish never",
+    "dist:dir": "npm run build && electron-builder --win --dir --publish never"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "basic-ftp": "^6.2.6",
+    "ssh2": "^1.17.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/ssh2": "^1.15.6",
+    "@vitejs/plugin-react": "^6.3.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "electron": "^45.3.2",
+    "electron-builder": "^26.18.0",
+    "electron-vite": "^6.0.0",
+    "ftp-srv": "^4.6.3",
+    "playwright-core": "^1.65.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0"
+  }
+}

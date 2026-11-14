@@ -1,0 +1,177 @@
+// Types shared between the main process and the renderer.
+// Anything marked "secret" never leaves the main process.
+
+export type Protocol = 'ssh' | 'ftps' | 'ftps-implicit' | 'ftp'
+export type AuthMethod = 'password' | 'key' | 'agent' | 'keyboard-interactive'
+/** What an AI client (via MCP) may do on a host. */
+export type AiAccess = 'none' | 'read' | 'full'
+/** Which AI actions require a click on "Allow" in the Clavium window. */
+export type AiConfirm = 'all' | 'changes' | 'none'
+
+export interface PortForward {
+  id: string
+  /** Bound on 127.0.0.1 only. */
+  localPort: number
+  remoteHost: string
+  remotePort: number
+}
+
+/** Host as stored inside the encrypted vault (main process only). */
+export interface HostRecord {
+  id: string
+  name: string
+  group: string
+  protocol: Protocol
+  hostname: string
+  port: number
+  username: string
+  authMethod: AuthMethod
+  /** secret */
+  password?: string
+  keyId?: string
+  allowLegacyAlgorithms: boolean
+  aiAccess: AiAccess
+  aiConfirm: AiConfirm
+  notes: string
+  forwards: PortForward[]
+  createdAt: number
+  updatedAt: number
+}
+
+/** Host as seen by the renderer: no secrets, only a flag. */
+export type HostSummary = Omit<HostRecord, 'password'> & { hasPassword: boolean }
+
+/** Input from the host editor. `password: undefined` keeps the stored one, `null` clears it. */
+export type HostInput = Omit<HostRecord, 'id' | 'createdAt' | 'updatedAt' | 'password'> & {
+  id?: string
+  password?: string | null
+}
+
+export interface SshKeyRecord {
+  id: string
+  name: string
+  type: string
+  publicKey: string
+  fingerprint: string
+  /** secret: OpenSSH/PEM private key text */
+  privateKey: string
+  /** secret */
+  passphrase?: string
+  createdAt: number
+}
+
+export type SshKeySummary = Omit<SshKeyRecord, 'privateKey' | 'passphrase'> & { encrypted: boolean }
+
+export interface KnownHost {
+  /** e.g. "ssh:example.com:22" or "ftps:example.com:21" */
+  id: string
+  keyType: string
+  /** "SHA256:..." */
+  fingerprint: string
+  addedAt: number
+}
+
+export interface AppSettings {
+  /** 0 disables auto-lock. */
+  autoLockMinutes: number
+  lockOnSystemLock: boolean
+  mcpEnabled: boolean
+  mcpPort: number
+  /** sha256 hex of the current MCP token; used only while the vault is locked. */
+  mcpTokenHash?: string
+  closeToTray: boolean
+  terminalFontSize: number
+}
+
+export const DEFAULT_SETTINGS: AppSettings = {
+  autoLockMinutes: 15,
+  lockOnSystemLock: true,
+  mcpEnabled: false,
+  mcpPort: 47821,
+  closeToTray: true,
+  terminalFontSize: 14
+}
+
+export type VaultState = 'uninitialized' | 'locked' | 'unlocked'
+
+export interface RemoteEntry {
+  name: string
+  path: string
+  type: 'file' | 'dir' | 'link' | 'other'
+  size: number
+  modifiedAt: number
+  permissions?: string
+}
+
+export interface AuditEntry {
+  ts: number
+  source: 'mcp' | 'app'
+  action: string
+  hostId?: string
+  hostName?: string
+  detail: string
+  result: 'ok' | 'denied' | 'error'
+}
+
+export interface TransferProgress {
+  transferId: string
+  name: string
+  direction: 'upload' | 'download'
+  transferred: number
+  total: number
+  done: boolean
+  error?: string
+}
+
+// ---- prompts the main process asks the user to answer -------------------
+
+export type PromptRequest =
+  | {
+      kind: 'hostKey'
+      id: string
+      host: string
+      keyType: string
+      fingerprint: string
+      /** set when a different key was stored before -> possible MITM */
+      previousFingerprint?: string
+    }
+  | {
+      kind: 'keyboardInteractive'
+      id: string
+      host: string
+      name: string
+      instructions: string
+      prompts: { prompt: string; echo: boolean }[]
+    }
+  | {
+      kind: 'mcpConfirm'
+      id: string
+      hostName: string
+      tool: string
+      summary: string
+      detail: string
+      destructive: boolean
+      timeoutMs: number
+    }
+
+export type PromptResponse =
+  | { kind: 'hostKey'; accept: boolean }
+  | { kind: 'keyboardInteractive'; answers: string[] | null }
+  | { kind: 'mcpConfirm'; allow: boolean }
+
+export interface McpStatus {
+  enabled: boolean
+  running: boolean
+  port: number
+  url: string
+  hasToken: boolean
+  error?: string
+}
+
+export interface ActiveForward {
+  hostId: string
+  forwardId: string
+  localPort: number
+  remoteHost: string
+  remotePort: number
+}
