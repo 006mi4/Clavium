@@ -4,6 +4,7 @@ import {
   FilePenLine,
   Download,
   File as FileIcon,
+  FileUp,
   FilePlus2,
   Folder,
   FolderPlus,
@@ -19,7 +20,7 @@ import type { HostSummary, RemoteEntry, TransferProgress } from '@shared/types'
 import { api, on } from '../api'
 import { Empty, IconButton, Sheet, Toolbar, formatBytes, formatDate, useConfirm, useMenu, useToast, type MenuItem } from '../ui'
 import { StatusDot, type ConnState } from './TerminalView'
-import { TextEditor } from './TextEditor'
+import { EditorWorkspace } from './EditorWorkspace'
 
 function parentOf(p: string): string {
   if (p === '/' || !p.includes('/')) return '/'
@@ -43,7 +44,13 @@ const STATE_TEXT: Record<ConnState, string> = {
   error: 'Connection failed'
 }
 
-export function FilesView(props: { host: HostSummary; onState: (s: ConnState) => void; onClose: () => void }) {
+export function FilesView(props: {
+  host: HostSummary
+  onState: (s: ConnState) => void
+  onClose: () => void
+  /** number of files with unsaved changes in the editor */
+  onUnsaved: (n: number) => void
+}) {
   const toast = useToast()
   const confirm = useConfirm()
   const menu = useMenu()
@@ -59,7 +66,13 @@ export function FilesView(props: { host: HostSummary; onState: (s: ConnState) =>
   const [transfers, setTransfers] = useState<Map<string, TransferProgress>>(new Map())
   const [attempt, setAttempt] = useState(0)
   const [ask, setAsk] = useState<{ title: string; label: string; value: string; action: string; ok: (v: string) => void } | null>(null)
-  const [editing, setEditing] = useState<RemoteEntry | null>(null)
+  const [mode, setMode] = useState<'list' | 'editor'>('list')
+  const [request, setRequest] = useState<{ entry: RemoteEntry; nonce: number } | null>(null)
+  const [openFiles, setOpenFiles] = useState(0)
+  const edit = (entry: RemoteEntry): void => {
+    setRequest({ entry, nonce: Date.now() })
+    setMode('editor')
+  }
   const lastClicked = useRef<number>(-1)
   const sidRef = useRef<string | null>(null)
   const cwdRef = useRef('')
@@ -164,6 +177,21 @@ export function FilesView(props: { host: HostSummary; onState: (s: ConnState) =>
         if (validName(name) && sid) void run(() => api.files.mkdir(sid, join(cwd, name)))
       }
     })
+  const newFile = (): void =>
+    setAsk({
+      title: 'New File',
+      label: 'Name',
+      value: '',
+      action: 'Create',
+      ok: (name) => {
+        if (!validName(name) || !sid) return
+        const path = join(cwd, name)
+        void run(async () => {
+          await api.files.createFile(sid, path)
+          edit({ name, path, type: 'file', size: 0, modifiedAt: 0 })
+        })
+      }
+    })
   const rename = (e: RemoteEntry): void =>
     setAsk({
       title: `Rename “${e.name}”`,
@@ -205,7 +233,7 @@ export function FilesView(props: { host: HostSummary; onState: (s: ConnState) =>
     }
     const list: MenuItem[] = []
     if (items.length === 1 && entry.type !== 'file') list.push({ label: 'Open', icon: Folder, onSelect: () => void load(entry.path) })
-    if (items.length === 1 && entry.type === 'file') list.push({ label: 'Edit', icon: FilePenLine, onSelect: () => setEditing(entry) })
+    if (items.length === 1 && entry.type === 'file') list.push({ label: 'Edit', icon: FilePenLine, onSelect: () => edit(entry) })
     list.push({ label: items.length > 1 ? `Download ${items.length} Items` : 'Download…', icon: Download, onSelect: () => download(items) })
     if (items.length === 1) list.push({ label: 'Rename…', icon: Pencil, onSelect: () => rename(entry) })
     list.push('separator', { label: 'Delete…', icon: Trash2, destructive: true, onSelect: () => void remove(items) })
@@ -224,17 +252,24 @@ export function FilesView(props: { host: HostSummary; onState: (s: ConnState) =>
   const running = transferList.filter((t) => !t.done).length
   const connected = !!sid
 
-  if (editing && sid) {
-    return (
-      <>
-        <TextEditor sid={sid} entry={editing} onClose={() => setEditing(null)} onSaved={() => void load(cwdRef.current)} onDownload={() => download([editing])} />
-        {menu.element}
-      </>
-    )
-  }
-
   return (
     <>
+      {request && (
+        <EditorWorkspace
+          sid={sid}
+          visible={mode === 'editor'}
+          request={request}
+          onBack={() => setMode('list')}
+          onReconnect={() => setAttempt((a) => a + 1)}
+          onSaved={() => void load(cwdRef.current)}
+          onDownload={(path, name) => download([{ name, path, type: 'file', size: 0, modifiedAt: 0 }])}
+          onState={(open, unsaved) => {
+            setOpenFiles(open)
+            props.onUnsaved(unsaved)
+          }}
+        />
+      )}
+      <div style={{ display: mode === 'list' || openFiles === 0 ? 'contents' : 'none' }}>
       <Toolbar
         title={props.host.name}
         subtitle={
@@ -244,6 +279,12 @@ export function FilesView(props: { host: HostSummary; onState: (s: ConnState) =>
           </>
         }
       >
+        {openFiles > 0 && (
+          <button className="btn" onClick={() => setMode('editor')}>
+            <FilePenLine size={14} /> Editor · {openFiles}
+          </button>
+        )}
+        <IconButton icon={FilePlus2} label="New File" disabled={!connected} onClick={newFile} />
         <IconButton icon={FolderPlus} label="New Folder" disabled={!connected} onClick={newFolder} />
         <IconButton
           icon={Upload}
@@ -251,7 +292,7 @@ export function FilesView(props: { host: HostSummary; onState: (s: ConnState) =>
           disabled={!connected}
           onClick={(e) =>
             menu.openBelow(e, [
-              { label: 'Upload Files…', icon: FilePlus2, onSelect: () => upload('files') },
+              { label: 'Upload Files…', icon: FileUp, onSelect: () => upload('files') },
               { label: 'Upload Folder…', icon: FolderUp, onSelect: () => upload('folder') }
             ])
           }
@@ -332,7 +373,7 @@ export function FilesView(props: { host: HostSummary; onState: (s: ConnState) =>
                 if (e.key === 'Delete') void remove(selEntries)
                 if (e.key === 'Backspace') void load(parentOf(cwd))
                 if (e.key === 'Enter' && selEntries.length === 1) {
-                  if (selEntries[0].type === 'file') setEditing(selEntries[0])
+                  if (selEntries[0].type === 'file') edit(selEntries[0])
                   else void load(selEntries[0].path)
                 }
                 if (e.key === 'F2' && selEntries.length === 1) rename(selEntries[0])
@@ -360,7 +401,7 @@ export function FilesView(props: { host: HostSummary; onState: (s: ConnState) =>
                         aria-selected={selected.has(e.path)}
                         onClick={(ev) => clickRow(ev, e, i)}
                         onContextMenu={(ev) => rowMenu(ev, e, i)}
-                        onDoubleClick={() => (e.type === 'file' ? setEditing(e) : void load(e.path))}
+                        onDoubleClick={() => (e.type === 'file' ? edit(e) : void load(e.path))}
                       >
                         <td className="name">
                           {e.type === 'dir' ? <Folder size={16} className="dir" /> : e.type === 'link' ? <Link2 size={16} /> : <FileIcon size={16} />}
@@ -409,6 +450,7 @@ export function FilesView(props: { host: HostSummary; onState: (s: ConnState) =>
         )}
       </div>
 
+      </div>
       {menu.element}
       {ask && <AskSheet {...ask} close={() => setAsk(null)} />}
     </>

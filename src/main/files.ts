@@ -61,8 +61,12 @@ export class FileManager {
     fs?.close()
   }
 
+  /** Close every session (vault locked, app quitting) and tell the interface about each one. */
   closeAll(): void {
-    for (const id of [...this.sessions.keys()]) this.close(id)
+    for (const id of [...this.sessions.keys()]) {
+      this.close(id)
+      this.send('files:closed', id)
+    }
   }
 
   private progress(p: TransferProgress): void {

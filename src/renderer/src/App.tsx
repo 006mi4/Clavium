@@ -10,7 +10,7 @@ import { McpPage } from './components/McpPage'
 import { ActivityPage, KeysPage, KnownHostsPage, SettingsPage } from './components/Pages'
 import { PromptHost } from './components/PromptHost'
 import { StatusDot, TerminalView, type ConnState } from './components/TerminalView'
-import { IconButton, useToast, type IconType } from './ui'
+import { IconButton, useConfirm, useToast, type IconType } from './ui'
 
 type Page = 'hosts' | 'keys' | 'known' | 'ai' | 'activity' | 'settings'
 
@@ -19,6 +19,8 @@ interface Session {
   kind: 'terminal' | 'files'
   host: HostSummary
   state: ConnState
+  /** files with unsaved changes in this session's editor */
+  unsaved: number
 }
 
 const LIBRARY: { page: Page; label: string; icon: IconType; tile: string }[] = [
@@ -29,6 +31,7 @@ const LIBRARY: { page: Page; label: string; icon: IconType; tile: string }[] = [
 
 export function App() {
   const toast = useToast()
+  const confirm = useConfirm()
   const [vault, setVault] = useState<VaultState | null>(null)
   const [page, setPage] = useState<Page>('hosts')
   /** 'page' shows the library page, otherwise the id of the visible session */
@@ -75,10 +78,20 @@ export function App() {
   }
   const open = (kind: Session['kind'], host: HostSummary): void => {
     const id = `${kind}-${host.id}-${Date.now()}`
-    setSessions((s) => [...s, { id, kind, host, state: 'connecting' }])
+    setSessions((s) => [...s, { id, kind, host, state: 'connecting', unsaved: 0 }])
     setActive(id)
   }
-  const close = (id: string): void => {
+  const close = async (id: string): Promise<void> => {
+    const s = sessions.find((x) => x.id === id)
+    if (s && s.unsaved > 0) {
+      const ok = await confirm({
+        title: s.unsaved === 1 ? 'Close and Discard Your Changes?' : `Close and Discard Changes to ${s.unsaved} Files?`,
+        message: `The editor for “${s.host.name}” has unsaved changes. They are lost if you close this session.`,
+        confirmLabel: 'Discard and Close',
+        destructive: true
+      })
+      if (!ok) return
+    }
     setSessions((list) => {
       const idx = list.findIndex((x) => x.id === id)
       const next = list.filter((x) => x.id !== id)
@@ -86,6 +99,8 @@ export function App() {
       return next
     })
   }
+  const setUnsaved = (id: string, unsaved: number): void =>
+    setSessions((list) => list.map((x) => (x.id === id && x.unsaved !== unsaved ? { ...x, unsaved } : x)))
   const setSessionState = (id: string, state: ConnState): void =>
     setSessions((list) => list.map((x) => (x.id === id && x.state !== state ? { ...x, state } : x)))
 
@@ -102,7 +117,7 @@ export function App() {
         setActive(ids[(i + (e.shiftKey ? -1 : 1) + ids.length) % ids.length])
       } else if (e.shiftKey && key === 'w' && active !== 'page') {
         e.preventDefault()
-        close(active)
+        void close(active)
       } else if (e.shiftKey && key === 'l') {
         e.preventDefault()
         void api.vault.lock()
@@ -120,7 +135,11 @@ export function App() {
   }, [sessions, active, vault])
 
   if (vault === null || settings === null) return null
-  if (vault !== 'unlocked') return <LockScreen state={vault} onDone={() => void api.vault.state().then(setVault)} />
+  // Locking normally clears the whole interface. If an editor still holds unsaved text, the
+  // interface stays alive underneath the lock screen so the text can be saved after unlocking.
+  const locked = vault !== 'unlocked'
+  const lockScreen = <LockScreen state={vault} onDone={() => void api.vault.state().then(setVault)} />
+  if (locked && !sessions.some((s) => s.unsaved > 0)) return lockScreen
 
   const navItem = (p: Page, label: string, Icon: IconType, tile: string, trail?: string) => (
     <button key={p} className={`side-item ${active === 'page' && page === p ? 'active' : ''}`} aria-current={active === 'page' && page === p ? 'page' : undefined} onClick={() => go(p)}>
@@ -133,7 +152,9 @@ export function App() {
   )
 
   return (
-    <div className="app">
+    <>
+    {locked && <div className="lock-cover">{lockScreen}</div>}
+    <div className="app" inert={locked}>
       <aside className="sidebar">
         <div className="sidebar-head drag">
           <Logo size={22} />
@@ -154,7 +175,7 @@ export function App() {
                   title={`${s.kind === 'terminal' ? 'Terminal' : 'Files'}: ${s.host.username}@${s.host.hostname}`}
                   onClick={() => setActive(s.id)}
                   onKeyDown={(e) => e.key === 'Enter' && setActive(s.id)}
-                  onAuxClick={(e) => e.button === 1 && close(s.id)}
+                  onAuxClick={(e) => e.button === 1 && void close(s.id)}
                 >
                   <span className="glyph">{s.kind === 'terminal' ? <SquareTerminal size={16} /> : <FolderOpen size={16} />}</span>
                   <span className="label">{s.host.name}</span>
@@ -166,7 +187,7 @@ export function App() {
                     aria-label={`Close ${s.host.name}`}
                     onClick={(e) => {
                       e.stopPropagation()
-                      close(s.id)
+                      void close(s.id)
                     }}
                   >
                     <X size={13} />
@@ -264,15 +285,16 @@ export function App() {
                 fontSize={settings.terminalFontSize}
                 onState={(st) => setSessionState(s.id, st)}
                 onOpenFiles={() => open('files', s.host)}
-                onClose={() => close(s.id)}
+                onClose={() => void close(s.id)}
               />
             ) : (
-              <FilesView host={s.host} onState={(st) => setSessionState(s.id, st)} onClose={() => close(s.id)} />
+              <FilesView host={s.host} onState={(st) => setSessionState(s.id, st)} onClose={() => void close(s.id)} onUnsaved={(n) => setUnsaved(s.id, n)} />
             )}
           </div>
         ))}
       </main>
       <PromptHost />
     </div>
+    </>
   )
 }

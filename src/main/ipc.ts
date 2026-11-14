@@ -237,6 +237,8 @@ export function registerIpc(ctx: IpcContext): void {
   handle('files:list', z.tuple([id, remotePath]), (fid, p) => ctx.files.get(fid).list(p))
   handle('files:mkdir', z.tuple([id, remotePath]), (fid, p) => ctx.files.get(fid).mkdir(p))
   handle('files:rename', z.tuple([id, remotePath, remotePath]), (fid, a, b) => ctx.files.get(fid).rename(a, b))
+  handle('files:stat', z.tuple([id, remotePath]), (fid, p) => ctx.files.get(fid).stat(p))
+  handle('files:createFile', z.tuple([id, remotePath]), (fid, p) => ctx.files.get(fid).writeFile(p, Buffer.alloc(0), false))
   handle('files:readText', z.tuple([id, remotePath]), (fid, p) => readTextFile(ctx.files.get(fid), p))
   handle(
     'files:writeText',

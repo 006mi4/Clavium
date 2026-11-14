@@ -329,3 +329,14 @@ const LINE_COMMENT: Record<string, string> = {
 export function lineCommentOf(id: string): string | null {
   return LINE_COMMENT[id] ?? null
 }
+
+/** Languages for the manual picker, by display name. */
+export const LANGUAGE_LIST: { id: string; name: string }[] = Object.entries(LANGUAGES)
+  .map(([id, l]) => ({ id, name: id === 'conf' ? 'Config (nginx, Apache, …)' : id === 'ini' ? 'Config (INI, TOML, .env)' : l.name }))
+  .sort((a, b) => (a.id === 'plain' ? -1 : b.id === 'plain' ? 1 : a.name.localeCompare(b.name)))
+
+/** Adds a line-number marker in front of every line (used when long lines are wrapped). */
+export function withLineMarkers(html: string): string {
+  let n = 1
+  return '<b data-n="1"></b>' + html.replace(/\n/g, () => `\n<b data-n="${++n}"></b>`)
+}

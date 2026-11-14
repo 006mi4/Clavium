@@ -297,9 +297,11 @@ export function IconButton(props: {
   label: string
   onClick?: (e: ReactMouseEvent<HTMLButtonElement>) => void
   disabled?: boolean
+  /** for toggle buttons */
+  pressed?: boolean
 }) {
   return (
-    <button type="button" className="icon-btn" title={props.label} aria-label={props.label} disabled={props.disabled} onClick={props.onClick}>
+    <button type="button" className="icon-btn" title={props.label} aria-label={props.label} aria-pressed={props.pressed} disabled={props.disabled} onClick={props.onClick}>
       <props.icon size={16} />
     </button>
   )

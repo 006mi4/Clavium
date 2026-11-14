@@ -200,10 +200,84 @@ describe('Clavium desktop app', () => {
     await page.keyboard.press('Escape')
     expect(await view().getByLabel('Find in file').count()).toBe(0)
 
-    await view().getByRole('button', { name: 'Keyboard Shortcuts' }).click()
+    await view().getByRole('button', { name: 'More' }).click()
+    await page.getByRole('menuitem', { name: 'Keyboard Shortcuts' }).click()
     await page.getByText('Duplicate line or selected lines').waitFor()
     await page.getByRole('button', { name: 'Done' }).click()
 
+    // right-click menu in the text
+    await area.click({ button: 'right', position: { x: 60, y: 70 } })
+    await page.getByRole('menuitem', { name: 'Duplicate Line' }).click()
+    expect((await lines()).length).toBe(original.split('\n').length + 1)
+    await area.press('Control+z')
+    expect(await area.inputValue()).toBe(original)
+
+    // wrapping long lines keeps one number per real line
+    await view().getByRole('button', { name: /Wrap Long Lines/ }).click()
+    expect(await view().locator('.editor.wrap b[data-n]').count()).toBe(original.split('\n').length)
+    await view().getByRole('button', { name: /Wrap Long Lines/ }).click()
+    expect(await view().locator('.editor.wrap').count()).toBe(0)
+
+    // language can be changed by hand
+    await view().getByLabel('Language').selectOption('json')
+    expect(await view().locator('.editor-layer .t-c').count()).toBe(0) // "#" is no comment in JSON
+    await view().getByLabel('Language').selectOption('yaml')
+    expect(await view().locator('.editor-layer .t-c', { hasText: '# Web stack' }).count()).toBe(1)
+
+    // --- several files: tabs and split view ---
+    await view().getByRole('button', { name: 'Back to Files' }).click()
+    await view().getByRole('button', { name: /Editor · 1/ }).waitFor() // the open file is kept
+    await view().locator('.table tr', { hasText: 'readme.txt' }).dblclick()
+    await view().getByRole('tab', { name: /readme\.txt/ }).waitFor()
+    expect(await view().getByRole('tab').count()).toBe(2)
+
+    await view().getByRole('button', { name: /Split Editor/ }).click()
+    expect(await view().locator('.ed-pane').count()).toBe(2)
+    const both = view().getByLabel('Contents of readme.txt')
+    expect(await both.count()).toBe(2) // the same file, side by side
+    await both.nth(1).press('Control+End')
+    await page.keyboard.type('typed in the right pane')
+    const leftView = view().locator('.ed-pane').first().locator('.editor-layer pre').last()
+    await expect.poll(() => leftView.innerText()).toContain('typed in the right pane') // both views show the same text
+    // undo takes typed text back in chunks like any text field, not one character per step,
+    // and keeps working while the file is open twice
+    let undoSteps = 0
+    while ((await both.nth(1).inputValue()).length > 'Hello from the test server'.length + 1 && undoSteps < 30) {
+      await both.nth(1).press('Control+z')
+      undoSteps++
+    }
+    expect(undoSteps).toBeLessThanOrEqual(6)
+    expect(await both.nth(1).inputValue()).toBe('Hello from the test server\n')
+    await expect.poll(() => leftView.innerText()).not.toContain('typed in the right pane')
+    await both.nth(0).click() // switching sides brings the other text field up to date
+    expect(await both.nth(0).inputValue()).toBe('Hello from the test server\n')
+
+    await view().locator('.ed-pane').first().getByRole('tab', { name: /docker-compose/ }).click()
+    await shot('06d-editor-split', true)
+    await view().getByRole('button', { name: /Close Split/ }).click()
+    expect(await view().locator('.ed-pane').count()).toBe(1)
+    expect(await view().getByRole('tab').count()).toBe(2)
+    await view().getByRole('tab', { name: /readme\.txt/ }).click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Close', exact: true }).click()
+    expect(await view().getByRole('tab').count()).toBe(1)
+
+    // --- new file from the file list ---
+    await view().getByRole('button', { name: 'Back to Files' }).click()
+    await view().getByRole('button', { name: 'New File' }).click()
+    await page.getByRole('dialog').getByLabel('Name').fill('notes.md')
+    await page.getByRole('dialog').getByRole('button', { name: 'Create' }).click()
+    const notes = view().getByLabel('Contents of notes.md')
+    await notes.waitFor()
+    await notes.click()
+    await page.keyboard.type('# Notes')
+    await page.keyboard.press('Control+s')
+    await expect.poll(() => (existsSync(join(srv.root, 'notes.md')) ? readFileSync(join(srv.root, 'notes.md'), 'utf8') : '')).toBe('# Notes')
+    await view().getByText('Saved', { exact: true }).waitFor()
+    await page.keyboard.press('Control+w')
+    await expect.poll(() => view().getByRole('tab').count()).toBe(1)
+
+    // --- saving ---
+    await area.click()
     await area.press('Control+End')
     await page.keyboard.type('      DEBUG: "false"')
     await view().getByText('Edited').waitFor()
@@ -220,17 +294,37 @@ describe('Clavium desktop app', () => {
     await page.getByText('The File Changed on the Server').waitFor()
     await page.getByRole('button', { name: 'Cancel' }).click()
     expect(readFileSync(remoteFile, 'utf8')).toBe('changed on the server by someone else')
+    await view().getByText('This file changed on the server.').waitFor()
 
-    // leaving with unsaved changes asks first
+    // closing the session with unsaved text asks first
     await view().getByRole('button', { name: 'Back to Files' }).click()
-    await page.getByText('Discard Your Changes?').waitFor()
+    await view().getByRole('button', { name: 'Close Session' }).click()
+    await page.getByText('Close and Discard Your Changes?').waitFor()
+    await page.getByRole('button', { name: 'Cancel' }).click()
+
+    // locking the vault closes the connection but keeps the unsaved text for after unlocking
+    await sidebar().getByRole('button', { name: /Lock Vault/ }).click()
+    await page.getByText('Clavium Is Locked').waitFor()
+    await page.getByLabel('Master password', { exact: true }).fill(MASTER)
+    await page.keyboard.press('Enter')
+    await page.getByText('Clavium Is Locked').waitFor({ state: 'detached' })
+    await sidebar().locator('.side-item', { hasText: HOST }).last().click()
+    await view().getByRole('button', { name: /Editor · 1/ }).click()
+    expect(await area.inputValue()).toContain('DEBUG: "false" # mine')
+    await view().getByText('The connection to the server is closed.').waitFor()
+    await view().getByRole('button', { name: 'Reconnect' }).click()
+    await view().getByText('The connection to the server is closed.').waitFor({ state: 'detached' })
+
+    // closing the tab with unsaved changes asks first
+    await view().getByRole('button', { name: /Close docker-compose\.yml \(unsaved\)/ }).click()
+    await page.getByText(/Discard Changes to/).waitFor()
     await page.getByRole('button', { name: 'Discard' }).click()
     await view().locator('.table td', { hasText: 'readme.txt' }).waitFor()
 
     // binary files are refused instead of being shown as garbage
     await view().locator('.table tr', { hasText: 'backup-2026-11-01.tar.gz' }).dblclick()
     await view().getByText(/binary file/).waitFor()
-    await view().getByRole('button', { name: 'Back to Files' }).first().click()
+    await view().getByRole('button', { name: 'Close Tab' }).click()
     await view().locator('.table td', { hasText: 'readme.txt' }).waitFor()
   })
 

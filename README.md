@@ -26,11 +26,15 @@
   (Windows OpenSSH agent / Pageant) and keyboard-interactive / 2FA logins
 - **SFTP file manager**: browse, upload (files, folders, drag & drop), download, rename, delete, new folder,
   transfer progress
-- **Built-in text editor**: double-click a remote file to edit it with syntax colors (YAML, JSON, shell, nginx/INI
-  configs, Dockerfile, HTML/CSS/JS/TS, Python, PHP, Go, Rust, SQL, Markdown, logs and more) and save back to the
-  server. Find and replace with match case, whole word and regular expressions, go to line, zoom, and the usual
-  editor shortcuts (duplicate, move, delete and comment lines, indent, auto-closing brackets). Warns if the file
-  changed on the server in the meantime
+- **Built-in text editor**: double-click a remote file to edit it and save it back to the server
+  - several files in tabs, split view (two files or one file twice side by side), new files
+  - syntax colors for about 25 file types (YAML, JSON, shell, nginx/INI configs, Dockerfile, HTML/CSS/JS/TS,
+    Python, PHP, Go, Rust, SQL, Markdown, logs and more), switchable by hand
+  - find and replace with match case, whole word and regular expressions, go to line, zoom, line wrapping
+  - the usual editor shortcuts and a right-click menu: duplicate, move, delete and comment lines, indent,
+    auto-closing brackets, matching-bracket and same-word highlighting
+  - warns when a file changed on the server, asks before discarding unsaved text, and keeps unsaved text
+    through a lost connection or a locked vault
 - **FTPS** (explicit and implicit TLS) and plain FTP (clearly marked as unencrypted)
 - **Tunnels** (`ssh -L` style port forwarding, bound to 127.0.0.1 only)
 - **Keys**: generate Ed25519 / ECDSA / RSA-4096 keys or import existing ones (with passphrase)
@@ -63,6 +67,10 @@ Clavium follows the Windows light / dark setting.
 | Find and replace | Find and replace (dark) |
 |---|---|
 | ![Find](docs/screenshots/06c-editor-find.png) | ![Find, dark](docs/screenshots/06c-editor-find-dark.png) |
+
+| Split view | Split view (dark) |
+|---|---|
+| ![Split](docs/screenshots/06d-editor-split.png) | ![Split, dark](docs/screenshots/06d-editor-split-dark.png) |
 
 | AI access | Approval before a command runs |
 |---|---|

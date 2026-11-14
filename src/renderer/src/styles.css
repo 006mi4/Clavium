@@ -225,6 +225,7 @@ h1, h2, h3, p { margin: 0; }
 .icon-btn:hover:not(:disabled) { background: var(--fill-hover); color: var(--text); }
 .icon-btn:active:not(:disabled) { background: var(--fill-active); }
 .icon-btn:disabled { opacity: 0.35; }
+.icon-btn[aria-pressed='true'] { background: var(--selection); color: var(--accent); }
 
 .field {
   height: 28px; width: 100%; padding: 0 9px; border-radius: var(--r-control);
@@ -471,11 +472,14 @@ select.field option { background: var(--bg-elevated); color: var(--text); }
 .editor-gutter pre { padding: 10px 10px 10px 14px; min-width: 46px; will-change: transform; }
 .editor-body { position: relative; flex: 1; min-width: 0; }
 .editor-layer { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.editor-field { position: absolute; inset: 0; }
 .editor-layer pre { padding: 10px 14px; color: var(--text); width: max-content; min-width: 100%; will-change: transform; }
 .editor-line { position: absolute; left: 0; right: 0; height: var(--ed-lh); background: var(--fill); will-change: transform; }
 .editor-marks { color: transparent !important; }
 .editor-marks mark { color: transparent; background: rgba(255, 196, 0, 0.38); border-radius: 2px; }
 .editor-marks mark.cur { background: rgba(255, 140, 0, 0.75); outline: 1px solid rgba(255, 140, 0, 0.9); }
+.editor-marks mark.word { background: var(--fill-active); }
+.editor-marks mark.bracket { background: var(--selection); outline: 1px solid var(--accent); }
 .editor textarea { position: absolute; inset: 0; width: 100%; height: 100%; padding: 10px 14px; border: none; outline: none; resize: none; overflow: auto; background: transparent; color: transparent; caret-color: var(--text); user-select: text; }
 .editor textarea.plain { color: var(--text); }
 .editor textarea::selection { background: var(--selection); color: transparent; }
@@ -491,3 +495,36 @@ select.field option { background: var(--bg-elevated); color: var(--text); }
 .toggle:hover { background: var(--fill-hover); }
 .toggle[aria-pressed='true'] { background: var(--selection); color: var(--accent); }
 kbd { font: 11.5px var(--mono); padding: 2px 6px; border-radius: 5px; background: var(--fill-hover); border: 0.5px solid var(--line-strong); color: var(--text); white-space: nowrap; }
+
+/* editor workspace: tabs, split panes, wrapped lines */
+.ed-panes { flex: 1; min-height: 0; display: flex; }
+.ed-pane { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; }
+.ed-pane + .ed-pane { border-left: 1px solid var(--line-strong); }
+.ed-doc { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ed-tabs { display: flex; flex-shrink: 0; overflow-x: auto; background: var(--bg-sidebar); border-bottom: 1px solid var(--line); scrollbar-width: none; }
+.ed-tabs::-webkit-scrollbar { display: none; }
+.ed-tab { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 6px 0 12px; border-right: 1px solid var(--line); color: var(--text-2); white-space: nowrap; cursor: default; flex-shrink: 0; max-width: 240px; }
+.ed-tab .name { overflow: hidden; text-overflow: ellipsis; }
+.ed-tab:hover { background: var(--fill); }
+.ed-tab[aria-selected='true'] { background: var(--bg); color: var(--text); }
+.ed-pane.focused .ed-tab[aria-selected='true'] { box-shadow: inset 0 2px 0 var(--accent); }
+.ed-tab .x { width: 18px; height: 18px; display: grid; place-items: center; border: none; background: none; border-radius: 5px; padding: 0; color: var(--text-3); position: relative; }
+.ed-tab .x svg { opacity: 0; }
+.ed-tab:hover .x svg, .ed-tab[aria-selected='true'] .x svg, .ed-tab .x:focus-visible svg { opacity: 1; }
+.ed-tab .x:hover { background: var(--fill-active); color: var(--text); }
+.ed-tab .x.dirty::before { content: ''; position: absolute; width: 8px; height: 8px; border-radius: 50%; background: var(--text-2); }
+.ed-tab .x.dirty svg { opacity: 0 !important; }
+.ed-tab .x.dirty:hover::before { display: none; }
+.ed-tab .x.dirty:hover svg { opacity: 1 !important; }
+.status-select { appearance: none; border: none; background: none; color: inherit; font: inherit; padding: 2px 4px; margin-left: -4px; border-radius: 4px; cursor: default; max-width: 190px; }
+.status-select:hover { background: var(--fill-hover); }
+.status-select option { background: var(--bg-elevated); color: var(--text); }
+
+.editor.wrap { --ed-gut: 52px; }
+.editor.wrap pre, .editor.wrap textarea { white-space: pre-wrap; overflow-wrap: anywhere; }
+.editor.wrap .editor-layer pre { width: var(--ed-w); min-width: 0; padding-left: calc(var(--ed-gut) + 14px); }
+.editor.wrap textarea { padding-left: calc(var(--ed-gut) + 14px); overflow-x: hidden; }
+.editor.wrap .editor-body::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: var(--ed-gut); background: var(--bg-sidebar); border-right: 1px solid var(--line); }
+.editor.wrap b[data-n] { position: relative; font-weight: 400; font-style: normal; }
+.editor.wrap b[data-n]::before { content: attr(data-n); position: absolute; top: 0; left: calc(-1 * (var(--ed-gut) + 14px)); width: calc(var(--ed-gut) - 10px); text-align: right; color: var(--text-3); font-weight: 400; font-style: normal; }
+.lock-cover { position: fixed; inset: 0; z-index: 200; }

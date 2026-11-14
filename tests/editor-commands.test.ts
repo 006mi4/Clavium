@@ -8,6 +8,9 @@ import {
   findMatches,
   indent,
   insertLine,
+  matchBracket,
+  renderMarks,
+  wordOccurrences,
   moveLines,
   newline,
   offsetOfLine,
@@ -20,6 +23,7 @@ import {
   type Edit,
   type Sel
 } from '../src/renderer/src/editor/commands'
+import { escapeHtml, withLineMarkers } from '../src/renderer/src/editor/highlight'
 
 /** "a[b]c" → selection around b; "a|c" → caret. */
 function sel(marked: string): Sel {
@@ -140,5 +144,43 @@ describe('search and replace', () => {
     const lit = buildSearch('a', opts).re as RegExp
     expect(replaceAll('a A b', lit, '$1', false)).toEqual({ text: '$1 $1 b', count: 2 })
     expect(replaceAll('abc', buildSearch('zzz', opts).re as RegExp, 'x', false)).toEqual({ text: 'abc', count: 0 })
+  })
+})
+
+describe('decorations', () => {
+  it('finds the partner of the bracket next to the caret', () => {
+    const t = 'f(a[1], {b: (2)})'
+    expect(matchBracket(t, 2)).toEqual([1, 16]) // caret right after "("
+    expect(matchBracket(t, 17)).toEqual([1, 16]) // caret right after the last ")"
+    expect(matchBracket(t, 3)).toEqual([3, 5]) // caret in front of "["
+    expect(matchBracket('(unclosed', 1)).toBeNull()
+    expect(matchBracket('abc', 1)).toBeNull()
+  })
+
+  it('finds other occurrences only for a whole selected word', () => {
+    const t = 'port = 1; export port; port_x; PORT'
+    expect(wordOccurrences(t, 0, 4)).toEqual([
+      [0, 4],
+      [17, 21]
+    ])
+    expect(wordOccurrences(t, 0, 3)).toEqual([]) // "por" is only part of a word
+    expect(wordOccurrences('alone here', 0, 5)).toEqual([]) // a single occurrence is not highlighted
+    expect(wordOccurrences('$a + $a', 0, 2)).toHaveLength(2)
+  })
+
+  it('renders marks as escaped text and drops overlaps', () => {
+    const html = renderMarks(
+      'a<b>c',
+      [
+        { from: 1, to: 4, cls: 'hit' },
+        { from: 2, to: 3, cls: 'word' }
+      ],
+      escapeHtml
+    )
+    expect(html).toBe('a<mark class="hit">&lt;b&gt;</mark>c')
+  })
+
+  it('numbers every line for wrapped display', () => {
+    expect(withLineMarkers('a\n<span class="t-c">b\nc</span>')).toBe('<b data-n="1"></b>a\n<b data-n="2"></b><span class="t-c">b\n<b data-n="3"></b>c</span>')
   })
 })

@@ -252,3 +252,57 @@ export function replaceAll(text: string, re: RegExp, replacement: string, regexM
   })
   return { text: out, count }
 }
+
+// ------------------------------------------------------------ decoration --
+
+const PAIRS: Record<string, string> = { '(': ')', '[': ']', '{': '}', ')': '(', ']': '[', '}': '{' }
+const SCAN_LIMIT = 50_000
+
+/** Positions of the bracket next to the caret and its partner, or null. */
+export function matchBracket(text: string, pos: number): [number, number] | null {
+  for (const at of [pos - 1, pos]) {
+    const ch = text[at]
+    if (!ch || !PAIRS[ch]) continue
+    const forward = ch in OPENERS
+    const partner = PAIRS[ch]
+    let depth = 0
+    const stop = forward ? Math.min(text.length, at + SCAN_LIMIT) : Math.max(-1, at - SCAN_LIMIT)
+    for (let i = at; i !== stop; i += forward ? 1 : -1) {
+      if (text[i] === ch) depth++
+      else if (text[i] === partner && --depth === 0) return forward ? [at, i] : [i, at]
+    }
+  }
+  return null
+}
+
+/** Other places where the selected word occurs (only for a selection that is one whole word). */
+export function wordOccurrences(text: string, start: number, end: number, max = 2000): [number, number][] {
+  const word = text.slice(start, end)
+  if (word.length < 2 || word.length > 100 || !/^[\w$-]+$/.test(word)) return []
+  if (/[\w$]/.test(text[start - 1] ?? '') || /[\w$]/.test(text[end] ?? '')) return []
+  // `word` only contains letters, digits, _ $ and - (checked above); $ needs escaping
+  const re = new RegExp('(?<![\\w$])' + word.split('$').join('\\$') + '(?![\\w$])', 'g')
+  const out: [number, number][] = []
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null && out.length < max) out.push([m.index, m.index + word.length])
+  return out.length > 1 ? out : []
+}
+
+export interface Mark {
+  from: number
+  to: number
+  cls: string
+}
+
+/** HTML for the decoration layer: transparent text with <mark> boxes. Overlapping marks are dropped. */
+export function renderMarks(text: string, marks: Mark[], escape: (s: string) => string): string {
+  const sorted = [...marks].sort((a, b) => a.from - b.from)
+  let out = ''
+  let last = 0
+  for (const m of sorted) {
+    if (m.from < last || m.to <= m.from) continue
+    out += escape(text.slice(last, m.from)) + `<mark class="${m.cls}">` + escape(text.slice(m.from, m.to)) + '</mark>'
+    last = m.to
+  }
+  return out + escape(text.slice(last))
+}

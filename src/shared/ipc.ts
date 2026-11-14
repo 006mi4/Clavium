@@ -31,6 +31,8 @@ export const INVOKE_CHANNELS = [
   'files:list',
   'files:mkdir',
   'files:rename',
+  'files:stat',
+  'files:createFile',
   'files:readText',
   'files:writeText',
   'files:remove',

@@ -82,6 +82,8 @@ export const api = {
     list: (id: string, path: string) => call<RemoteEntry[]>('files:list', id, path),
     mkdir: (id: string, path: string) => call<void>('files:mkdir', id, path),
     rename: (id: string, from: string, to: string) => call<void>('files:rename', id, from, to),
+    stat: (id: string, path: string) => call<RemoteEntry>('files:stat', id, path),
+    createFile: (id: string, path: string) => call<void>('files:createFile', id, path),
     readText: (id: string, path: string) => call<TextFile>('files:readText', id, path),
     writeText: (id: string, path: string, file: Pick<TextFile, 'text' | 'eol' | 'bom'>, expected: TextFileVersion, force: boolean) =>
       call<TextWriteResult>('files:writeText', id, path, file, expected, force),
