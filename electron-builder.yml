@@ -58,4 +58,9 @@ nsis:
 portable:
   artifactName: Clavium-${version}-portable.${ext}
 
-publish: null
+# Used by the in-app updater to find releases. Nothing is uploaded from a developer machine
+# (builds run with --publish never); the release workflow uploads the files.
+publish:
+  provider: github
+  owner: 006mi4
+  repo: Clavium

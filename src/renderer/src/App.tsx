@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowLeftRight, FolderOpen, History, KeyRound, Lock, Server, Settings, ShieldCheck, Sparkles, SquareTerminal, X } from 'lucide-react'
-import type { ActiveForward, HostSummary, SshKeySummary, VaultState } from '@shared/types'
+import { ArrowDownCircle, ArrowLeftRight, FolderOpen, History, KeyRound, Lock, Server, Settings, ShieldCheck, Sparkles, SquareTerminal, X } from 'lucide-react'
+import type { ActiveForward, HostSummary, SshKeySummary, UpdateState, VaultState } from '@shared/types'
 import { api, on, type UiSettings } from './api'
 import { FilesView } from './components/FilesView'
 import { HostsPage } from './components/HostsPage'
@@ -40,6 +40,7 @@ export function App() {
   const [settings, setSettings] = useState<UiSettings | null>(null)
   const [selectedHost, setSelectedHost] = useState<string | null>(null)
   const [newHostSignal, setNewHostSignal] = useState(0)
+  const [update, setUpdate] = useState<UpdateState | null>(null)
 
   const reloadHosts = useCallback(() => void api.hosts.list().then(setHosts, toast.error), [])
   const reloadKeys = useCallback(() => void api.keys.list().then(setKeys, toast.error), [])
@@ -48,10 +49,12 @@ export function App() {
   useEffect(() => {
     void api.vault.state().then(setVault)
     void api.settings.get().then(setSettings)
+    void api.update.state().then(setUpdate)
     const offs = [
       on('vault:changed', (s: VaultState) => setVault(s)),
       on('settings:changed', (s: UiSettings) => setSettings(s)),
-      on('fwd:changed', reloadTunnels)
+      on('fwd:changed', reloadTunnels),
+      on('update:changed', (s: UpdateState) => setUpdate(s))
     ]
     return () => offs.forEach((off) => off())
   }, [])
@@ -217,7 +220,18 @@ export function App() {
           {navItem('activity', 'Activity', History, 'gray')}
         </nav>
 
-        <div className="sidebar-foot">{navItem('settings', 'Settings', Settings, 'gray')}</div>
+        <div className="sidebar-foot">
+          {(update?.status === 'available' || update?.status === 'ready') && (
+            <button className="side-item" onClick={() => go('settings')}>
+              <span className="glyph" style={{ color: 'var(--accent)' }}>
+                <ArrowDownCircle size={17} />
+              </span>
+              <span className="label">{update.status === 'ready' ? 'Update Ready' : 'Update Available'}</span>
+              <span className="trail">{update.version}</span>
+            </button>
+          )}
+          {navItem('settings', 'Settings', Settings, 'gray')}
+        </div>
       </aside>
 
       <main className="main">

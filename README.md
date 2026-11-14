@@ -89,6 +89,17 @@ Get-FileHash .\Clavium-Setup-0.1.0.exe -Algorithm SHA256
 gh attestation verify .\Clavium-Setup-0.1.0.exe --repo 006mi4/Clavium
 ```
 
+### Updates
+
+The installed version updates itself in place: **Settings → Updates → Check Now → Download Update →
+Restart and Install**. Your vault and settings are kept. Clavium checks GitHub for a new release on start
+and twice a day (can be switched off), but it never downloads or installs anything without your click.
+
+An update is installed only if it is signed with the Clavium release key (Ed25519) that is built into the
+app, is strictly newer than the installed version, and matches the signed size and SHA-512 checksum.
+The portable version can't update itself; download the new file instead. Details in
+[SECURITY.md](SECURITY.md#updates).
+
 Every release is built from the tagged source by [`.github/workflows/release.yml`](.github/workflows/release.yml)
 — nothing is built on a developer machine.
 
@@ -177,6 +188,8 @@ Short version — details and threat model in [SECURITY.md](SECURITY.md):
 - **MCP:** listens on 127.0.0.1 only, random 256-bit bearer token (constant-time compare, rate limited),
   requests with a browser `Origin` or a foreign `Host` header are rejected (CSRF / DNS rebinding). The AI never
   sees passwords or keys. Everything is logged in *Activity*.
+- **Updates:** Ed25519-signed manifest verified against a key compiled into the app, no downgrades, HTTPS to
+  GitHub only, nothing installs without your click.
 - **Electron:** context isolation, sandboxed renderer, no Node in the renderer, strict CSP, all IPC validated
   with zod and restricted to the app window, navigation/new windows blocked, permissions denied, fuses
   (`RunAsNode`, `NODE_OPTIONS`, `--inspect` off, ASAR integrity on).

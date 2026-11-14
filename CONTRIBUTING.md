@@ -23,6 +23,9 @@ npm run test:e2e   # builds and drives the real app (Windows)
 
 ## Releasing (maintainers)
 
+0. Once: add the Ed25519 update signing key as repository secret `UPDATE_SIGNING_KEY`
+   (Settings → Secrets and variables → Actions). Without it the release workflow fails on purpose.
 1. Bump `version` in `package.json`, commit.
 2. `git tag v<version> && git push --tags`
-3. The *Release* workflow builds, tests and publishes the installer, portable exe, checksums and attestation.
+3. The *Release* workflow builds, tests and publishes the installer, portable exe, the signed update manifest,
+   checksums and attestation.

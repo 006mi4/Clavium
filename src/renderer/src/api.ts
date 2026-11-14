@@ -10,6 +10,7 @@ import type {
   PromptResponse,
   RemoteEntry,
   SshKeySummary,
+  UpdateState,
   VaultState
 } from '@shared/types'
 
@@ -91,6 +92,12 @@ export const api = {
   },
   prompt: {
     respond: (id: string, r: PromptResponse) => call<void>('prompt:respond', id, r)
+  },
+  update: {
+    state: () => call<UpdateState>('update:state'),
+    check: () => call<UpdateState>('update:check'),
+    download: () => call<UpdateState>('update:download'),
+    install: () => call<void>('update:install')
   },
   audit: { list: (limit = 300) => call<AuditEntry[]>('audit:list', limit) },
   app: {

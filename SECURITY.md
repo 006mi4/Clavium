@@ -80,6 +80,37 @@ It contains no secrets; the token is passed by the AI client via the `CLAVIUM_MC
 - Electron fuses: `RunAsNode`, `NODE_OPTIONS` and `--inspect` disabled; cookie encryption, embedded ASAR
   integrity validation and "only load app from ASAR" enabled.
 
+### Updates
+
+The installed (NSIS) build can update itself from the project's GitHub releases.
+
+- Each release contains `update-manifest.json` (version, installer file name, size, SHA-512) and
+  `update-manifest.json.sig`, an Ed25519 signature over the exact manifest bytes.
+- The public key is compiled into the app (`UPDATE_PUBLIC_KEY` in `src/main/core/update.ts`). The app
+  verifies the signature **before** it downloads the installer, checks the downloaded file against the
+  signed size and SHA-512, and hashes it once more immediately before running it.
+- The signed version must equal the offered version and be strictly newer than the installed one, so an
+  old signed installer cannot be replayed as a "new" update (downgrade protection). Pre-releases are ignored.
+- Manifest and signature are fetched over HTTPS from `github.com` only; redirects to any host other than
+  GitHub's release storage are rejected. The check does not rely on TLS or on GitHub for integrity: a
+  tampered download fails the signature check.
+- Nothing is downloaded or installed without a click. There is no silent background installation.
+- The update check sends an ordinary HTTPS request to GitHub (which sees your IP address) and nothing else.
+  It can be turned off in Settings.
+
+**The signing key.** Whoever holds the private key can publish updates that installed copies accept, so it
+is the most sensitive secret of the project. It is not in the repository. Releases are signed in the
+release workflow from the `UPDATE_SIGNING_KEY` repository secret, which only the signing step can read.
+This means a compromise of the GitHub account or of the release workflow would also compromise updates.
+Maintainers who want to rule that out can keep the key offline and sign locally instead
+(`node scripts/sign-update.mjs --key <file>`), then upload the two manifest files to the release by hand.
+If the key is lost, existing installations can no longer be updated in place and users must install a
+new version manually. Forks must generate their own key (`scripts/generate-update-key.mjs`).
+
+Limits: updates are not Authenticode-signed, and the update check itself (is there a newer version?) is
+not signed, so an attacker who controls the connection or the release page could hide an update, but not
+install one.
+
 ### Releases
 
 Releases are built only by GitHub Actions from a tagged commit, published with SHA-256 checksums and a

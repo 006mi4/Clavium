@@ -21,6 +21,7 @@ import { registerIpc } from './ipc'
 import { McpController } from './mcpController'
 import { UiPrompter } from './prompts'
 import { TerminalManager } from './terminals'
+import { Updater } from './updater'
 
 /** Real location of the executable (the portable build unpacks itself to a temp dir). */
 function exePath(): string {
@@ -89,6 +90,8 @@ function runApp(): void {
     bridgePath,
     onChange: () => send('mcp:changed')
   })
+
+  const updater = new Updater(settings, (s) => send('update:changed', s))
 
   vault.onStateChange((state) => {
     if (state !== 'unlocked') {
@@ -217,7 +220,7 @@ function runApp(): void {
     session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false))
     session.defaultSession.setPermissionCheckHandler(() => false)
 
-    registerIpc({ window: getWindow, vault, settings, audit, prompter, mcp, terminals, files, forwards })
+    registerIpc({ window: getWindow, vault, settings, audit, prompter, mcp, terminals, files, forwards, updater })
     createWindow()
 
     if (existsSync(iconPath)) {
@@ -227,6 +230,7 @@ function runApp(): void {
     }
 
     await mcp.apply()
+    updater.start()
 
     // ---- auto-lock ----
     setInterval(() => {

@@ -13,6 +13,7 @@ import type { ForwardManager } from './forwards'
 import type { McpController } from './mcpController'
 import type { UiPrompter } from './prompts'
 import type { TerminalManager } from './terminals'
+import type { Updater } from './updater'
 
 export const REPO_URL = 'https://github.com/006mi4/Clavium'
 
@@ -26,6 +27,7 @@ export interface IpcContext {
   terminals: TerminalManager
   files: FileManager
   forwards: ForwardManager
+  updater: Updater
 }
 
 // ------------------------------------------------------------ schemas ----
@@ -276,6 +278,12 @@ export function registerIpc(ctx: IpcContext): void {
   handle('prompt:respond', z.tuple([id, promptResponseSchema]), (pid, resp) =>
     ctx.prompter.respond(pid, resp as PromptResponse)
   )
+
+  // updates
+  handle('update:state', z.tuple([]), () => ctx.updater.getState())
+  handle('update:check', z.tuple([]), () => ctx.updater.check())
+  handle('update:download', z.tuple([]), () => ctx.updater.download())
+  handle('update:install', z.tuple([]), () => ctx.updater.install())
 
   // misc
   handle('audit:list', z.tuple([z.number().int().min(1).max(2000)]), (limit) => ctx.audit.recent(limit))

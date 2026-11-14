@@ -81,6 +81,8 @@ export interface AppSettings {
   mcpTokenHash?: string
   closeToTray: boolean
   terminalFontSize: number
+  /** Ask GitHub for a newer release on start and twice a day. */
+  autoCheckUpdates: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -89,7 +91,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   mcpEnabled: false,
   mcpPort: 47821,
   closeToTray: true,
-  terminalFontSize: 14
+  terminalFontSize: 14,
+  autoCheckUpdates: true
 }
 
 export type VaultState = 'uninitialized' | 'locked' | 'unlocked'
@@ -174,4 +177,17 @@ export interface ActiveForward {
   localPort: number
   remoteHost: string
   remotePort: number
+}
+
+export interface UpdateState {
+  status: 'unsupported' | 'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'verifying' | 'ready' | 'error'
+  currentVersion: string
+  /** version offered / being downloaded / ready to install */
+  version?: string
+  /** download progress in percent */
+  progress?: number
+  error?: string
+  checkedAt?: number
+  /** why updates are unsupported */
+  reason?: 'portable' | 'development'
 }

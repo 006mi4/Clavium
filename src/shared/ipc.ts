@@ -41,6 +41,10 @@ export const INVOKE_CHANNELS = [
   'fwd:stop',
   'prompt:respond',
   'audit:list',
+  'update:state',
+  'update:check',
+  'update:download',
+  'update:install',
   'app:info',
   'app:openExternal',
   'clipboard:read',
@@ -59,7 +63,8 @@ export const EVENT_CHANNELS = [
   'prompt:cancel',
   'audit:entry',
   'fwd:changed',
-  'mcp:changed'
+  'mcp:changed',
+  'update:changed'
 ] as const
 
 export type InvokeChannel = (typeof INVOKE_CHANNELS)[number]

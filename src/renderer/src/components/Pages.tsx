@@ -1,7 +1,7 @@
 import { useEffect, useState, type MouseEvent } from 'react'
 import { ClipboardPaste, Copy, FileKey2, History, KeyRound, Plus, ShieldCheck, Trash2, WandSparkles } from 'lucide-react'
 import type { AppInfo } from '@shared/ipc'
-import type { AuditEntry, KnownHost, SshKeySummary } from '@shared/types'
+import type { AuditEntry, KnownHost, SshKeySummary, UpdateState } from '@shared/types'
 import { api, on, type UiSettings } from '../api'
 import { Empty, Group, IconButton, Row, Segmented, Select, Sheet, Switch, Toolbar, ValueRow, formatDate, useConfirm, useMenu, useToast } from '../ui'
 import { StrengthBar } from './LockScreen'
@@ -335,6 +335,8 @@ export function SettingsPage(props: { settings: UiSettings }) {
             </Row>
           </Group>
 
+          <UpdateGroup auto={s.autoCheckUpdates} setAuto={(v) => set({ autoCheckUpdates: v })} />
+
           {info && (
             <Group title="About">
               <ValueRow label="Version">{info.version}</ValueRow>
@@ -353,6 +355,78 @@ export function SettingsPage(props: { settings: UiSettings }) {
       </div>
       {changing && <PasswordSheet close={() => setChanging(false)} />}
     </>
+  )
+}
+
+function UpdateGroup({ auto, setAuto }: { auto: boolean; setAuto: (v: boolean) => void }) {
+  const toast = useToast()
+  const [u, setU] = useState<UpdateState | null>(null)
+  useEffect(() => {
+    void api.update.state().then(setU)
+    return on('update:changed', (s: UpdateState) => setU(s))
+  }, [])
+  if (!u) return null
+
+  if (u.status === 'unsupported') {
+    return (
+      <Group
+        title="Updates"
+        caption={
+          u.reason === 'portable'
+            ? 'The portable version can’t update itself. Download the new version from GitHub, or use the installer to get in-app updates.'
+            : 'Updates are only available in the installed app.'
+        }
+      >
+        <ValueRow label="Installed version">{u.currentVersion}</ValueRow>
+      </Group>
+    )
+  }
+
+  const busy = u.status === 'checking' || u.status === 'downloading' || u.status === 'verifying'
+  const text: Record<UpdateState['status'], string> = {
+    unsupported: '',
+    idle: `Version ${u.currentVersion}`,
+    checking: 'Checking for updates…',
+    'up-to-date': `Clavium ${u.currentVersion} is up to date`,
+    available: `Version ${u.version} is available`,
+    downloading: `Downloading version ${u.version}… ${u.progress ?? 0} %`,
+    verifying: 'Verifying the signature…',
+    ready: `Version ${u.version} is verified and ready to install`,
+    error: u.error ?? 'The update failed'
+  }
+
+  return (
+    <Group
+      title="Updates"
+      caption="Updates come from the project’s GitHub releases. Clavium installs an update only if it is signed with the Clavium release key, and never without your click."
+    >
+      <div className="row" role="group" aria-label="Software update">
+        <span className="row-label" style={{ maxWidth: 'none' }}>
+          <span className={u.status === 'error' ? 'signal danger' : u.status === 'ready' || u.status === 'up-to-date' ? 'signal ok' : ''} style={{ whiteSpace: 'normal', fontSize: 13 }}>
+            {text[u.status]}
+          </span>
+          {u.checkedAt && !busy && <span className="hint">Last checked {formatDate(u.checkedAt)}</span>}
+        </span>
+        <span className="row-control">
+          {u.status === 'available' ? (
+            <button className="btn prominent" onClick={() => void api.update.download().catch(toast.error)}>
+              Download Update
+            </button>
+          ) : u.status === 'ready' ? (
+            <button className="btn prominent" onClick={() => void api.update.install().catch(toast.error)}>
+              Restart and Install
+            </button>
+          ) : (
+            <button className="btn" disabled={busy} onClick={() => void api.update.check().catch(toast.error)}>
+              Check Now
+            </button>
+          )}
+        </span>
+      </div>
+      <Row label="Check for updates automatically" hint="Contacts github.com on start and twice a day. Nothing else is sent.">
+        <Switch on={auto} onChange={setAuto} />
+      </Row>
+    </Group>
   )
 }
 

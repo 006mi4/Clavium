@@ -1,22 +1,33 @@
 name: Release
 
-# Push a tag like v0.1.0 (must match "version" in package.json) to build and publish
+# Push a tag like v0.1.0 (must match "version" in package.json) to build, sign and publish
 # the Windows installer and portable exe as a GitHub Release.
+#
+# Requires the repository secret UPDATE_SIGNING_KEY (Ed25519 private key, PEM). Installed copies
+# of Clavium only accept updates signed with it. Third-party actions are pinned to commit SHAs.
 on:
   push:
     tags: ['v*']
 
 permissions:
-  contents: write # create the release
-  id-token: write # build provenance attestation
-  attestations: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   release:
     runs-on: windows-latest
+    permissions:
+      contents: write # create the release
+      id-token: write # build provenance attestation
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: npm
@@ -35,6 +46,13 @@ jobs:
       - run: npm test
       - run: npx electron-builder --win --publish never
 
+      # The only step that sees the signing key. It fails if the key is missing or does not match
+      # the public key compiled into the app.
+      - name: Sign the update manifest
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: node scripts/sign-update.mjs
+
       - name: SHA-256 checksums
         shell: pwsh
         run: |
@@ -45,16 +63,21 @@ jobs:
 
       # Lets users verify that a download was built by this workflow from this repository:
       #   gh attestation verify Clavium-Setup-x.y.z.exe --repo 006mi4/Clavium
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
         with:
           subject-path: |
             dist/Clavium-Setup-*.exe
             dist/Clavium-*-portable.exe
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: |
             dist/Clavium-Setup-*.exe
+            dist/Clavium-Setup-*.exe.blockmap
             dist/Clavium-*-portable.exe
+            dist/latest.yml
+            dist/update-manifest.json
+            dist/update-manifest.json.sig
             dist/SHA256SUMS.txt

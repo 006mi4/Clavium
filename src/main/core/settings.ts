@@ -11,7 +11,8 @@ export const settingsSchema = z.object({
   mcpPort: z.number().int().min(1024).max(65535),
   mcpTokenHash: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   closeToTray: z.boolean(),
-  terminalFontSize: z.number().int().min(8).max(32)
+  terminalFontSize: z.number().int().min(8).max(32),
+  autoCheckUpdates: z.boolean()
 })
 
 /** Non-secret preferences, stored as plain JSON next to the vault. */
