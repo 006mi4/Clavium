@@ -10,6 +10,9 @@ import type {
   PromptResponse,
   RemoteEntry,
   SshKeySummary,
+  TextFile,
+  TextFileVersion,
+  TextWriteResult,
   UpdateState,
   VaultState
 } from '@shared/types'
@@ -79,6 +82,9 @@ export const api = {
     list: (id: string, path: string) => call<RemoteEntry[]>('files:list', id, path),
     mkdir: (id: string, path: string) => call<void>('files:mkdir', id, path),
     rename: (id: string, from: string, to: string) => call<void>('files:rename', id, from, to),
+    readText: (id: string, path: string) => call<TextFile>('files:readText', id, path),
+    writeText: (id: string, path: string, file: Pick<TextFile, 'text' | 'eol' | 'bom'>, expected: TextFileVersion, force: boolean) =>
+      call<TextWriteResult>('files:writeText', id, path, file, expected, force),
     remove: (id: string, path: string, recursive: boolean) => call<void>('files:remove', id, path, recursive),
     download: (id: string, entries: RemoteEntry[]) => call<boolean>('files:download', id, entries),
     upload: (id: string, dir: string, kind: 'files' | 'folder') => call<boolean>('files:upload', id, dir, kind),

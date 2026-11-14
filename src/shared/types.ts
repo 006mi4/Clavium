@@ -191,3 +191,20 @@ export interface UpdateState {
   /** why updates are unsupported */
   reason?: 'portable' | 'development'
 }
+
+/** Identifies the state of a remote file when it was opened, to detect changes by others. */
+export interface TextFileVersion {
+  size: number
+  modifiedAt: number
+}
+
+export interface TextFile {
+  /** always uses 
+ line breaks; `eol` remembers what the file had */
+  text: string
+  eol: 'lf' | 'crlf' | 'mixed'
+  bom: boolean
+  version: TextFileVersion
+}
+
+export type TextWriteResult = { saved: true; version: TextFileVersion } | { saved: false; conflict: 'changed' | 'deleted' }

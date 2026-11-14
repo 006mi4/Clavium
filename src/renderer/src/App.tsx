@@ -93,7 +93,7 @@ export function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (!e.ctrlKey || vault !== 'unlocked') return
-      const inTerminal = (e.target as HTMLElement | null)?.closest?.('.xterm') != null
+      const inTerminal = (e.target as HTMLElement | null)?.closest?.('.xterm, .editor, .find-bar') != null
       const key = e.key.toLowerCase()
       if (e.key === 'Tab' && sessions.length > 0) {
         e.preventDefault()

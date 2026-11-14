@@ -2,7 +2,7 @@
 // stdio bridge and locking. Run with `npm run test:e2e` (builds first).
 // It also regenerates the screenshots in docs/screenshots (light, plus a few dark ones).
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -59,7 +59,10 @@ beforeAll(async () => {
   mkdirSync(shots, { recursive: true })
   srv = await startTestSshServer()
   writeFileSync(join(srv.root, 'readme.txt'), 'Hello from the test server\n')
-  writeFileSync(join(srv.root, 'docker-compose.yml'), 'services:\n  web:\n    image: nginx:stable\n')
+  writeFileSync(
+    join(srv.root, 'docker-compose.yml'),
+    ['# Web stack', 'services:', '  web:', '    image: nginx:stable', '    ports:', '      - "80:80"', '      - "443:443"', '    volumes:', '      - ./www:/usr/share/nginx/html:ro', '    restart: unless-stopped', '    environment:', '      TZ: Europe/Berlin', '      WORKERS: 4', ''].join('\n')
+  )
   writeFileSync(join(srv.root, 'backup-2026-11-01.tar.gz'), Buffer.alloc(48_211))
   for (const dir of ['www', 'logs', 'scripts']) mkdirSync(join(srv.root, dir))
   dataDir = mkdtempSync(join(tmpdir(), 'clavium-e2e-'))
@@ -128,6 +131,107 @@ describe('Clavium desktop app', () => {
     await shot('06-sftp', true)
     // both sessions are listed in the sidebar
     expect(await sidebar().locator('.side-item', { hasText: HOST }).count()).toBe(2)
+  })
+
+  it('edits a file in the built-in editor and saves it to the server', async () => {
+    const remoteFile = join(srv.root, 'docker-compose.yml')
+    await view().locator('.table tr', { hasText: 'docker-compose.yml' }).dblclick()
+    const area = view().getByLabel('Contents of docker-compose.yml')
+    await area.waitFor()
+    expect(await area.inputValue()).toContain('image: nginx:stable')
+    // colored rendering: the YAML key is marked as a key, the comment as a comment
+    expect(await view().locator('.editor-layer .t-a', { hasText: 'services' }).count()).toBe(1)
+    expect(await view().locator('.editor-layer .t-c', { hasText: '# Web stack' }).count()).toBe(1)
+    expect(await view().getByText('YAML', { exact: true }).count()).toBe(1)
+    await shot('06b-editor', true)
+
+    // --- editor shortcuts, in the real app ---
+    const original = await area.inputValue()
+    const lines = async (): Promise<string[]> => (await area.inputValue()).split('\n')
+
+    await area.press('Control+g')
+    await view().getByLabel('Go to line').fill('4')
+    await page.keyboard.press('Enter')
+    await view().getByText('Line 4, Column 1').waitFor()
+
+    await page.keyboard.press('Control+d') // duplicate line
+    expect((await lines()).filter((l) => l === '    image: nginx:stable')).toHaveLength(2)
+    await page.keyboard.press('Control+z') // undo restores it
+    expect(await area.inputValue()).toBe(original)
+
+    await page.keyboard.press('Control+/') // comment / uncomment
+    expect((await lines())[3]).toBe('    # image: nginx:stable')
+    await page.keyboard.press('Control+/')
+    expect(await area.inputValue()).toBe(original)
+
+    await page.keyboard.press('Alt+ArrowDown') // move line down and back up
+    expect((await lines()).slice(3, 5)).toEqual(['    ports:', '    image: nginx:stable'])
+    await page.keyboard.press('Alt+ArrowUp')
+    expect(await area.inputValue()).toBe(original)
+
+    await page.keyboard.press('Control+l') // delete line
+    expect(await lines()).not.toContain('    image: nginx:stable')
+    await page.keyboard.press('Control+z')
+    expect(await area.inputValue()).toBe(original)
+
+    // find with match count, then replace all and undo it in one step
+    await area.press('Control+Home') // search starts at the caret
+    await page.keyboard.press('Control+h')
+    await view().getByLabel('Find in file').fill('nginx')
+    await view().getByText('2', { exact: true }).waitFor()
+    expect(await view().locator('.editor-marks mark').count()).toBe(2)
+    await page.keyboard.press('Enter')
+    await view().getByText('1 of 2').waitFor()
+    await page.keyboard.press('F3')
+    await view().getByText('2 of 2').waitFor()
+    await view().getByLabel('Replace with').fill('caddy')
+    await shot('06c-editor-find', true)
+    await view().getByRole('button', { name: 'Replace All' }).click()
+    expect(await area.inputValue()).toBe(original.replaceAll('nginx', 'caddy'))
+    await area.press('Control+z')
+    expect(await area.inputValue()).toBe(original)
+
+    // regular expressions and invalid input
+    await view().getByRole('button', { name: 'Regular Expression' }).click()
+    await view().getByLabel('Find in file').fill('"\\d+:\\d+"')
+    await view().getByText('2', { exact: true }).waitFor()
+    await view().getByLabel('Find in file').fill('(')
+    await view().getByText(/Invalid expression/).waitFor()
+    await page.keyboard.press('Escape')
+    expect(await view().getByLabel('Find in file').count()).toBe(0)
+
+    await view().getByRole('button', { name: 'Keyboard Shortcuts' }).click()
+    await page.getByText('Duplicate line or selected lines').waitFor()
+    await page.getByRole('button', { name: 'Done' }).click()
+
+    await area.press('Control+End')
+    await page.keyboard.type('      DEBUG: "false"')
+    await view().getByText('Edited').waitFor()
+    await page.keyboard.press('Control+s')
+    await view().getByText('Saved', { exact: true }).waitFor()
+    const onServer = readFileSync(remoteFile, 'utf8')
+    expect(onServer.endsWith(['      WORKERS: 4', '      DEBUG: "false"'].join('\n'))).toBe(true)
+    expect(onServer.includes('\r')).toBe(false)
+
+    // a file changed behind our back is not overwritten without asking
+    await page.keyboard.type(' # mine')
+    writeFileSync(remoteFile, 'changed on the server by someone else')
+    await page.keyboard.press('Control+s')
+    await page.getByText('The File Changed on the Server').waitFor()
+    await page.getByRole('button', { name: 'Cancel' }).click()
+    expect(readFileSync(remoteFile, 'utf8')).toBe('changed on the server by someone else')
+
+    // leaving with unsaved changes asks first
+    await view().getByRole('button', { name: 'Back to Files' }).click()
+    await page.getByText('Discard Your Changes?').waitFor()
+    await page.getByRole('button', { name: 'Discard' }).click()
+    await view().locator('.table td', { hasText: 'readme.txt' }).waitFor()
+
+    // binary files are refused instead of being shown as garbage
+    await view().locator('.table tr', { hasText: 'backup-2026-11-01.tar.gz' }).dblclick()
+    await view().getByText(/binary file/).waitFor()
+    await view().getByRole('button', { name: 'Back to Files' }).first().click()
+    await view().locator('.table td', { hasText: 'readme.txt' }).waitFor()
   })
 
   let token = ''

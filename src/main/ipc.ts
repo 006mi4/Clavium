@@ -7,6 +7,7 @@ import type { AuditLog } from './core/audit'
 import { randomId } from './core/crypto'
 import { buildKeyRecord, generateKey, summarizeKey } from './core/keys'
 import { settingsSchema, type SettingsStore } from './core/settings'
+import { MAX_TEXT_BYTES, readTextFile, writeTextFile } from './core/textfile'
 import type { Vault } from './core/vault'
 import type { FileManager } from './files'
 import type { ForwardManager } from './forwards'
@@ -236,6 +237,18 @@ export function registerIpc(ctx: IpcContext): void {
   handle('files:list', z.tuple([id, remotePath]), (fid, p) => ctx.files.get(fid).list(p))
   handle('files:mkdir', z.tuple([id, remotePath]), (fid, p) => ctx.files.get(fid).mkdir(p))
   handle('files:rename', z.tuple([id, remotePath, remotePath]), (fid, a, b) => ctx.files.get(fid).rename(a, b))
+  handle('files:readText', z.tuple([id, remotePath]), (fid, p) => readTextFile(ctx.files.get(fid), p))
+  handle(
+    'files:writeText',
+    z.tuple([
+      id,
+      remotePath,
+      z.object({ text: z.string().max(MAX_TEXT_BYTES + 1024), eol: z.enum(['lf', 'crlf', 'mixed']), bom: z.boolean() }),
+      z.object({ size: z.number(), modifiedAt: z.number() }),
+      z.boolean()
+    ]),
+    (fid, p, file, expected, force) => writeTextFile(ctx.files.get(fid), p, file, expected, force)
+  )
   handle('files:remove', z.tuple([id, remotePath, z.boolean()]), (fid, p, rec) => ctx.files.get(fid).remove(p, rec))
   handle('files:download', z.tuple([id, z.array(entrySchema).min(1).max(1000)]), async (fid, entries) => {
     const win = ctx.window()

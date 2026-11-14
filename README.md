@@ -26,6 +26,11 @@
   (Windows OpenSSH agent / Pageant) and keyboard-interactive / 2FA logins
 - **SFTP file manager**: browse, upload (files, folders, drag & drop), download, rename, delete, new folder,
   transfer progress
+- **Built-in text editor**: double-click a remote file to edit it with syntax colors (YAML, JSON, shell, nginx/INI
+  configs, Dockerfile, HTML/CSS/JS/TS, Python, PHP, Go, Rust, SQL, Markdown, logs and more) and save back to the
+  server. Find and replace with match case, whole word and regular expressions, go to line, zoom, and the usual
+  editor shortcuts (duplicate, move, delete and comment lines, indent, auto-closing brackets). Warns if the file
+  changed on the server in the meantime
 - **FTPS** (explicit and implicit TLS) and plain FTP (clearly marked as unencrypted)
 - **Tunnels** (`ssh -L` style port forwarding, bound to 127.0.0.1 only)
 - **Keys**: generate Ed25519 / ECDSA / RSA-4096 keys or import existing ones (with passphrase)
@@ -50,6 +55,14 @@ Clavium follows the Windows light / dark setting.
 | Files (SFTP) | New host |
 |---|---|
 | ![SFTP](docs/screenshots/06-sftp.png) | ![Host editor](docs/screenshots/02-host-editor.png) |
+
+| Text editor | Text editor (dark) |
+|---|---|
+| ![Editor](docs/screenshots/06b-editor.png) | ![Editor, dark](docs/screenshots/06b-editor-dark.png) |
+
+| Find and replace | Find and replace (dark) |
+|---|---|
+| ![Find](docs/screenshots/06c-editor-find.png) | ![Find, dark](docs/screenshots/06c-editor-find-dark.png) |
 
 | AI access | Approval before a command runs |
 |---|---|
