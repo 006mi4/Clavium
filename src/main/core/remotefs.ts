@@ -28,6 +28,13 @@ export interface RemoteFs {
   mkdir(path: string): Promise<void>
   remove(path: string, recursive: boolean): Promise<void>
   rename(from: string, to: string): Promise<void>
+  /** Set the permission bits (0o000 - 0o777). */
+  chmod(path: string, mode: number): Promise<void>
+  /**
+   * A second, independent handle to the same server, used for one transfer. Closing it aborts
+   * whatever it is doing without touching the session the user is browsing with.
+   */
+  fork(): Promise<RemoteFs>
   download(remotePath: string, localPath: string, onProgress?: ProgressFn): Promise<void>
   upload(localPath: string, remotePath: string, onProgress?: ProgressFn): Promise<void>
   close(): void
@@ -77,19 +84,50 @@ export class SftpFs implements RemoteFs {
   readonly protocol = 'sftp' as const
   private closed = false
   private closeHandlers: (() => void)[] = []
+  private readonly onEnd: () => void
 
   private constructor(
     private readonly client: SshClient,
     private readonly sftp: SFTPWrapper,
     private readonly ownsClient: boolean
   ) {
-    const done = (): void => {
+    this.onEnd = (): void => {
       if (this.closed) return
       this.closed = true
+      client.removeListener('close', this.onEnd)
       for (const fn of this.closeHandlers) fn()
     }
-    sftp.on('close', done)
-    client.on('close', done)
+    sftp.on('close', this.onEnd)
+    client.on('close', this.onEnd)
+  }
+
+  fork(): Promise<RemoteFs> {
+    return SftpFs.open(this.client, false)
+  }
+
+  /**
+   * Settle as soon as this handle is closed. A transfer that is cut off by closing its channel is
+   * not reliably reported back by the SSH library; without this the caller could wait forever.
+   */
+  private untilClosed<T>(work: Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const onClose = (): void => reject(new Error('The connection was closed'))
+      if (this.closed) return onClose()
+      this.closeHandlers.push(onClose)
+      const forget = (): void => {
+        const i = this.closeHandlers.indexOf(onClose)
+        if (i >= 0) this.closeHandlers.splice(i, 1)
+      }
+      work.then(
+        (v) => (forget(), resolve(v)),
+        (e) => (forget(), reject(e))
+      )
+    })
+  }
+
+  async chmod(path: string, mode: number): Promise<void> {
+    assertSafeRemotePath(path)
+    await p<void>((cb) => this.sftp.chmod(path, mode & 0o777, (err) => cb(err, undefined)))
   }
 
   static async open(client: SshClient, ownsClient: boolean): Promise<SftpFs> {
@@ -191,26 +229,26 @@ export class SftpFs implements RemoteFs {
 
   async download(remotePath: string, localPath: string, onProgress?: ProgressFn): Promise<void> {
     assertSafeRemotePath(remotePath)
-    await p<void>((cb) =>
+    await this.untilClosed(p<void>((cb) =>
       this.sftp.fastGet(
         remotePath,
         localPath,
         { step: (t: number, _c: number, total: number) => onProgress?.(t, total) },
         (err) => cb(err, undefined)
       )
-    )
+    ))
   }
 
   async upload(localPath: string, remotePath: string, onProgress?: ProgressFn): Promise<void> {
     assertSafeRemotePath(remotePath)
-    await p<void>((cb) =>
+    await this.untilClosed(p<void>((cb) =>
       this.sftp.fastPut(
         localPath,
         remotePath,
         { step: (t: number, _c: number, total: number) => onProgress?.(t, total) },
         (err) => cb(err, undefined)
       )
-    )
+    ))
   }
 
   close(): void {
@@ -220,6 +258,7 @@ export class SftpFs implements RemoteFs {
       /* ignore */
     }
     if (this.ownsClient) this.client.end()
+    this.onEnd()
   }
 }
 
@@ -255,8 +294,23 @@ export class FtpFs implements RemoteFs {
   private closeHandlers: (() => void)[] = []
   private closed = false
 
-  private constructor(private readonly client: FtpClient) {
+  private constructor(
+    private readonly client: FtpClient,
+    private readonly reconnect: () => Promise<FtpFs>
+  ) {
     client.ftp.socket.on('close', () => this.markClosed())
+  }
+
+  /** FTP can do one thing per connection, so a transfer gets a connection of its own. */
+  fork(): Promise<RemoteFs> {
+    return this.reconnect()
+  }
+
+  async chmod(path: string, mode: number): Promise<void> {
+    assertSafeRemotePath(path)
+    return this.run(async () => {
+      await this.client.send(`SITE CHMOD ${(mode & 0o777).toString(8).padStart(3, '0')} ${path}`)
+    })
   }
 
   private markClosed(): void {
@@ -338,7 +392,7 @@ export class FtpFs implements RemoteFs {
         client = await attempt(true)
       }
     }
-    return new FtpFs(client)
+    return new FtpFs(client, () => FtpFs.connect({ ...host, password }, { ...ctx, interactive: false }))
   }
 
   private run<T>(fn: () => Promise<T>): Promise<T> {

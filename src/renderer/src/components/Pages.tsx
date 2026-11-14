@@ -287,7 +287,26 @@ export function SettingsPage(props: { settings: UiSettings }) {
   const [changing, setChanging] = useState(false)
   const s = props.settings
   useEffect(() => void api.app.info().then(setInfo), [])
+  const confirm = useConfirm()
   const set = (patch: Partial<UiSettings>): void => void api.settings.set(patch).catch(toast.error)
+  const backUp = async (): Promise<void> => {
+    try {
+      if (await api.vault.exportBackup()) toast.ok('Backup saved. You need your master password to restore it.')
+    } catch (e) {
+      toast.error(e)
+    }
+  }
+  const restore = async (): Promise<void> => {
+    const ok = await confirm({
+      title: 'Restore the Vault from a Backup?',
+      message:
+        'All hosts and keys in this vault are replaced by those in the backup, and every session is closed. You then unlock with the master password of the backup. The vault you replace is kept as a file next to the vault.',
+      confirmLabel: 'Choose Backup…',
+      destructive: true
+    })
+    if (!ok) return
+    await api.vault.importBackup().catch(toast.error)
+  }
 
   return (
     <>
@@ -317,6 +336,18 @@ export function SettingsPage(props: { settings: UiSettings }) {
             <Row label="Master password" multi>
               <button className="btn" onClick={() => setChanging(true)}>
                 Change…
+              </button>
+            </Row>
+            <Row
+              label="Backup"
+              hint="One file with all hosts, keys and known hosts. It stays encrypted with your master password, so keep it wherever you like."
+              multi
+            >
+              <button className="btn" onClick={() => void backUp()}>
+                Back Up…
+              </button>
+              <button className="btn" onClick={() => void restore()}>
+                Restore…
               </button>
             </Row>
           </Group>

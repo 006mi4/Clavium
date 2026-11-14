@@ -12,6 +12,8 @@ export interface TestSshServer {
   port: number
   root: string
   hostKey: string
+  /** permission changes the server was asked to make */
+  setstat: { path: string; mode: number | undefined }[]
   close(): Promise<void>
 }
 
@@ -32,6 +34,7 @@ function toAttrs(st: fs.Stats) {
 export async function startTestSshServer(hostKey?: string): Promise<TestSshServer> {
   const root = mkdtempSync(join(tmpdir(), 'clavium-sftp-'))
   const key = hostKey ?? utils.generateKeyPairSync('ed25519').private
+  const setstat: TestSshServer['setstat'] = []
   const real = (vpath: string): string => {
     const norm = posix.normalize(posix.isAbsolute(vpath) ? vpath : posix.join('/', vpath))
     if (norm.includes('..')) throw new Error('escape')
@@ -175,7 +178,10 @@ export async function startTestSshServer(hostKey?: string): Promise<TestSshServe
           simple('RMDIR', (p) => fs.rmdirSync(real(p)))
           simple('REMOVE', (p) => fs.unlinkSync(real(p)))
           simple('RENAME', (a, b) => fs.renameSync(real(a), real(b)))
-          sftp.on('SETSTAT', (reqid) => sftp.status(reqid, STATUS_CODE.OK))
+          sftp.on('SETSTAT', (reqid, path, attrs) => {
+            setstat.push({ path, mode: attrs.mode })
+            sftp.status(reqid, STATUS_CODE.OK)
+          })
           sftp.on('FSETSTAT', (reqid) => sftp.status(reqid, STATUS_CODE.OK))
         })
       })
@@ -189,6 +195,7 @@ export async function startTestSshServer(hostKey?: string): Promise<TestSshServe
     port,
     root,
     hostKey: key,
+    setstat,
     close: () =>
       new Promise<void>((resolve) => {
         server.close(() => resolve())

@@ -154,6 +154,46 @@ export class Vault {
     await this.save()
   }
 
+  /**
+   * Write a backup. The backup is the vault file itself: it stays encrypted with the master
+   * password, so it can be kept on a USB stick or in cloud storage.
+   */
+  async exportTo(path: string): Promise<void> {
+    if (!existsSync(this.filePath)) throw new VaultError('There is no vault to back up yet', 'corrupt')
+    await this.writeChain.catch(() => undefined)
+    await copyFile(this.filePath, path)
+  }
+
+  /**
+   * Replace the vault with a backup. The vault is locked first, and the file that is replaced is
+   * kept next to the vault. Returns the path of that kept file, if there was one.
+   */
+  async importFrom(path: string): Promise<string | null> {
+    let file: VaultFile
+    try {
+      file = JSON.parse(await readFile(path, 'utf8')) as VaultFile
+    } catch {
+      throw new VaultError('This is not a Clavium vault backup', 'corrupt')
+    }
+    const kdf = file?.kdf as Partial<KdfParams> | undefined
+    if (file?.format !== 'clavium-vault' || file.version !== 1 || typeof file.data !== 'string' || kdf?.name !== 'scrypt' || typeof kdf.salt !== 'string') {
+      throw new VaultError('This is not a Clavium vault backup', 'corrupt')
+    }
+    await this.writeChain.catch(() => undefined)
+    this.lock()
+    let kept: string | null = null
+    await mkdir(dirname(this.filePath), { recursive: true })
+    if (existsSync(this.filePath)) {
+      kept = `${this.filePath}.replaced-${new Date().toISOString().replace(/[:.]/g, '-')}`
+      await copyFile(this.filePath, kept)
+    }
+    await copyFile(path, this.filePath)
+    this.failedAttempts = 0
+    this.blockedUntil = 0
+    this.emit()
+    return kept
+  }
+
   /** Apply a change to the decrypted data and persist it. */
   async update<T>(mutator: (d: VaultData) => T): Promise<T> {
     const result = mutator(this.data)

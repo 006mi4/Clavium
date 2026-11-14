@@ -93,6 +93,17 @@ export function LockScreen({ state, onDone }: { state: VaultState; onDone: () =>
               <button className="btn prominent large" type="submit" disabled={busy || !pw || !pw2}>
                 {busy ? 'Creating…' : 'Create Vault'}
               </button>
+              <button
+                type="button"
+                className="link"
+                onClick={() =>
+                  void api.vault
+                    .importBackup() // the screen switches to "locked" by itself once the vault is there
+                    .catch((err: Error) => setError(err.message))
+                }
+              >
+                Restore from a Backup…
+              </button>
             </div>
           ) : (
             <div className="fields">

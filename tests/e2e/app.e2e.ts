@@ -2,7 +2,7 @@
 // stdio bridge and locking. Run with `npm run test:e2e` (builds first).
 // It also regenerates the screenshots in docs/screenshots (light, plus a few dark ones).
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { _electron, type ElectronApplication, type Locator, type Page } from 'playwright-core'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { readClipboardFiles, writeClipboardFiles } from '../../src/main/winclipboard'
 import { startTestSshServer, TEST_PASSWORD, TEST_USER, type TestSshServer } from '../helpers/testServer'
 
 const root = resolve(__dirname, '../..')
@@ -70,7 +71,7 @@ beforeAll(async () => {
     executablePath: electronPath,
     args: ['.'],
     cwd: root,
-    env: { ...process.env, CLAVIUM_DATA_DIR: dataDir, CLAVIUM_NO_NOTIFICATIONS: '1', ELECTRON_RENDERER_URL: '' }
+    env: { ...process.env, CLAVIUM_DATA_DIR: dataDir, CLAVIUM_NO_NOTIFICATIONS: '1', CLAVIUM_NO_AUTOLOCK: '1', ELECTRON_RENDERER_URL: '' }
   })
   page = await app.firstWindow()
   await page.setViewportSize({ width: 1280, height: 800 })
@@ -328,6 +329,139 @@ describe('Clavium desktop app', () => {
     await view().locator('.table td', { hasText: 'readme.txt' }).waitFor()
   })
 
+  it('cuts, copies, pastes and undoes in the file browser', async () => {
+    const has = (...parts: string[]): boolean => existsSync(join(srv.root, ...parts))
+    const until = async (what: () => boolean): Promise<void> => {
+      for (let i = 0; i < 100 && !what(); i++) await page.waitForTimeout(50)
+      expect(what()).toBe(true)
+    }
+    const row = (name: string) => view().locator('.table tr', { hasText: name })
+
+    // cut with Ctrl+X, paste into another folder with Ctrl+V
+    await row('readme.txt').click()
+    await page.keyboard.press('Control+x')
+    await view().locator('.table tr[data-cut]', { hasText: 'readme.txt' }).waitFor()
+    await row('scripts').dblclick()
+    await view().getByText('This Folder Is Empty').waitFor()
+    await page.keyboard.press('Control+v')
+    await row('readme.txt').waitFor()
+    expect(has('scripts', 'readme.txt')).toBe(true)
+    expect(has('readme.txt')).toBe(false)
+
+    // the move can be taken back, with the button and with Ctrl+Z
+    await view().getByRole('button', { name: 'Undo Move of “readme.txt”' }).click()
+    await until(() => has('readme.txt') && !has('scripts', 'readme.txt'))
+    expect(await view().getByRole('button', { name: 'Undo', exact: true }).isDisabled()).toBe(true)
+
+    // copy through the context menu; the copy gets a numbered name instead of replacing anything
+    await view().getByRole('button', { name: 'Enclosing Folder' }).click()
+    await row('docker-compose.yml').click({ button: 'right' })
+    await shot('06e-files-menu', true)
+    await page.getByRole('menuitem', { name: /^Copy/ }).click()
+    await view().locator('.file-area').click({ button: 'right', position: { x: 600, y: 420 } })
+    await page.getByRole('menuitem', { name: /^Paste/ }).click()
+    await row('docker-compose (2).yml').waitFor()
+    expect(readFileSync(join(srv.root, 'docker-compose (2).yml'), 'utf8')).toBe(readFileSync(join(srv.root, 'docker-compose.yml'), 'utf8'))
+
+    // renaming never replaces an existing file, and can be undone as well
+    await row('docker-compose (2).yml').click()
+    await page.keyboard.press('F2')
+    await page.getByLabel('New name').fill('readme.txt')
+    await page.getByRole('button', { name: 'Rename', exact: true }).click()
+    await page.getByText(/already exists/).waitFor()
+    await row('docker-compose (2).yml').click()
+    await page.keyboard.press('F2')
+    await page.getByLabel('New name').fill('compose-copy.yml')
+    await page.getByRole('button', { name: 'Rename', exact: true }).click()
+    await until(() => has('compose-copy.yml'))
+    await view().locator('.file-area').focus()
+    await page.keyboard.press('Control+z')
+    await until(() => has('docker-compose (2).yml') && !has('compose-copy.yml'))
+
+    // undoing the copy deletes it, after asking
+    await page.keyboard.press('Control+z')
+    await page.getByRole('button', { name: 'Delete Copies' }).click()
+    await until(() => !has('docker-compose (2).yml'))
+    expect(has('docker-compose.yml')).toBe(true)
+
+    // files copied in Windows are uploaded with Ctrl+V; an existing name asks before replacing
+    const local = mkdtempSync(join(tmpdir(), 'clavium-e2e-local-'))
+    writeFileSync(join(local, 'from-windows.txt'), 'made on the PC')
+    writeFileSync(join(local, 'readme.txt'), 'new readme from the PC')
+    await writeClipboardFiles([join(local, 'from-windows.txt')]).catch(() => undefined)
+    const clipboardWorks = (await readClipboardFiles().catch(() => [])).length === 1
+    if (clipboardWorks) {
+      await view().locator('.file-area').focus()
+      await page.keyboard.press('Control+v')
+      await until(() => has('from-windows.txt'))
+      expect(readFileSync(join(srv.root, 'from-windows.txt'), 'utf8')).toBe('made on the PC')
+
+      await writeClipboardFiles([join(local, 'readme.txt')])
+      await page.keyboard.press('Control+v')
+      await page.getByText('Replace “readme.txt”?').waitFor()
+      await page.getByRole('button', { name: 'Cancel' }).click()
+      expect(readFileSync(join(srv.root, 'readme.txt'), 'utf8')).toBe('Hello from the test server\n')
+      await page.keyboard.press('Control+v')
+      await page.getByRole('button', { name: 'Replace', exact: true }).click()
+      await until(() => readFileSync(join(srv.root, 'readme.txt'), 'utf8') === 'new readme from the PC')
+      writeFileSync(join(srv.root, 'readme.txt'), 'Hello from the test server\n')
+      rmSync(join(srv.root, 'from-windows.txt'))
+
+      // a file copied in the app lands on the Windows clipboard as a real file
+      await row('docker-compose.yml').click()
+      await page.keyboard.press('Control+c')
+      let onClipboard: string[] = []
+      for (let i = 0; i < 40 && onClipboard.length === 0; i++) {
+        await page.waitForTimeout(250)
+        onClipboard = (await readClipboardFiles()).filter((f) => f.endsWith('docker-compose.yml'))
+      }
+      expect(onClipboard).toHaveLength(1)
+      expect(onClipboard[0].startsWith(join(dataDir, 'transfer-tmp'))).toBe(true)
+      expect(readFileSync(onClipboard[0], 'utf8')).toBe(readFileSync(join(srv.root, 'docker-compose.yml'), 'utf8'))
+    }
+    await view().getByRole('button', { name: 'Clear Finished' }).click().catch(() => undefined)
+    await view().getByRole('button', { name: 'Reload' }).click()
+    await row('readme.txt').waitFor()
+  })
+
+  it('sorts and filters the file list and changes permissions', async () => {
+    const row = (name: string) => view().locator('.table tr', { hasText: name })
+    const fileNames = async (): Promise<string[]> => (await view().locator('.table tbody td.name').allInnerTexts()).map((t) => t.trim())
+
+    // folders stay on top; a click on a column sorts by it, a second click turns the order around
+    expect((await fileNames()).slice(0, 3)).toEqual(['logs', 'scripts', 'www'])
+    await view().getByRole('button', { name: 'Size' }).click()
+    expect((await fileNames())[3]).toBe('backup-2026-11-01.tar.gz') // largest first
+    await view().getByRole('button', { name: 'Name' }).click()
+    await view().getByRole('button', { name: 'Name' }).click()
+    const descending = await fileNames()
+    expect(descending.slice(0, 3)).toEqual(['www', 'scripts', 'logs'])
+    await view().getByRole('button', { name: 'Name' }).click()
+
+    // Ctrl+F jumps to the filter; Escape clears it again
+    await page.keyboard.press('Control+f')
+    await page.keyboard.type('READ')
+    expect(await fileNames()).toEqual(['readme.txt'])
+    await page.keyboard.press('Control+f')
+    await page.keyboard.type('zzz')
+    await view().getByText('Nothing to Show').waitFor()
+    await page.keyboard.press('Escape')
+    await row('docker-compose.yml').waitFor()
+
+    // permissions: the sheet starts from the current ones, the server gets the new mode
+    await row('readme.txt').click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Permissions…' }).click()
+    const sheet = page.getByRole('dialog')
+    await sheet.getByLabel('Numeric permissions').fill('640')
+    expect(await sheet.getByLabel('Owner: Write').isChecked()).toBe(true)
+    expect(await sheet.getByLabel('Everyone: Read').isChecked()).toBe(false)
+    await sheet.getByLabel('Everyone: Read').check()
+    await shot('06f-files-permissions')
+    await sheet.getByRole('button', { name: 'Apply' }).click()
+    await page.getByText('Permissions of “readme.txt” changed.').waitFor()
+    expect(srv.setstat.at(-1)).toEqual({ path: '/readme.txt', mode: 0o644 })
+  })
+
   let token = ''
   let url = ''
 
@@ -453,6 +587,25 @@ describe('Clavium desktop app', () => {
     await sidebar().getByRole('button', { name: 'Settings' }).click()
     await view().getByText('Lock automatically').waitFor()
     await shot('11-settings', true)
+
+    // back up the vault, then restore it: the app locks and opens again with the same password
+    const backup = join(mkdtempSync(join(tmpdir(), 'clavium-e2e-backup-')), 'backup.clavium-vault')
+    await app.evaluate(({ dialog }, file) => {
+      dialog.showSaveDialog = (async () => ({ canceled: false, filePath: file })) as typeof dialog.showSaveDialog
+      dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [file] })) as typeof dialog.showOpenDialog
+    }, backup)
+    await view().getByRole('button', { name: 'Back Up…' }).click()
+    await page.getByText(/Backup saved/).waitFor()
+    const saved = JSON.parse(readFileSync(backup, 'utf8')) as { format: string }
+    expect(saved.format).toBe('clavium-vault')
+    expect(readFileSync(backup, 'utf8')).not.toContain(HOST) // encrypted
+    await view().getByRole('button', { name: 'Restore…' }).click()
+    await page.getByRole('button', { name: 'Choose Backup…' }).click()
+    await page.getByText('Clavium Is Locked').waitFor()
+    await page.getByPlaceholder('Master password').fill(MASTER)
+    await page.keyboard.press('Enter')
+    await sidebar().getByRole('button', { name: 'Hosts', exact: true }).click()
+    await page.locator('.host-row', { hasText: HOST }).waitFor()
 
     // smallest supported window: layout must not break (checked by eye, not committed)
     await sidebar().getByRole('button', { name: 'Hosts', exact: true }).click()

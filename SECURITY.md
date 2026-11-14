@@ -31,6 +31,13 @@ keystrokes or modify the program, and no desktop application can defend against 
 
 Non-secret preferences live in `settings.json`; the AI activity log in `audit.log`.
 
+### Vault backup
+
+- A backup is a copy of the vault file. It is encrypted exactly like the vault (scrypt + AES-256-GCM) and
+  can only be opened with the master password it was made with.
+- Restoring checks that the file is a vault, locks the app and closes all sessions. The vault that gets
+  replaced is kept as `vault.json.replaced-<time>` in the data folder.
+
 ### SSH / SFTP
 
 - Implementation: [`ssh2`](https://github.com/mscdex/ssh2) (pure JavaScript + Node.js crypto).
@@ -42,6 +49,24 @@ Non-secret preferences live in `settings.json`; the AI activity log in `audit.lo
 - Agent forwarding is never requested. Port forwards bind to 127.0.0.1 only.
 - File names received from a server are sanitised before writing to the local disk (no path traversal,
   no reserved Windows names).
+
+### File transfers, drag and drop, clipboard
+
+- Moving and copying on the server never replaces an existing item; an upload that would replace something
+  asks first. Moves, renames and copies can be undone while the app is running.
+- Dragging items out of the window: Windows does not tell an application where a dragged item was dropped.
+  Clavium therefore drags a small marker file with a random name and watches the local drives for the
+  moment Windows copies it; the folder it appears in is the download target. The marker is deleted again
+  only after its content (a random 256-bit value) has been checked, so no other file can be removed. The
+  drives are watched only while a drag is in progress, and nothing about other files is stored.
+- Copying server files to the Windows clipboard, and copying between two servers, needs the files on this
+  computer for a moment. They are kept in `transfer-tmp` inside Clavium's data folder (not in a shared
+  temp folder), limited to 200 MB per copy for the clipboard, and removed with the next copy, when the vault
+  is locked, when the app quits and at every start.
+- Every transfer runs on a channel (SFTP) or connection (FTP) of its own. Cancelling closes only that one;
+  a download that did not finish is deleted, and so is an upload that the user stopped while it was running.
+- The Windows clipboard is accessed through the PowerShell that ships with Windows, started by its full
+  path; file names are passed in an environment variable and never become part of the command text.
 
 ### FTP / FTPS
 

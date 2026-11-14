@@ -119,12 +119,32 @@ export interface AuditEntry {
 export interface TransferProgress {
   transferId: string
   name: string
-  direction: 'upload' | 'download'
+  direction: 'upload' | 'download' | 'copy'
   transferred: number
   total: number
   done: boolean
   error?: string
+  /** stopped by the user */
+  cancelled?: boolean
 }
+
+export interface MovePair {
+  from: string
+  to: string
+}
+
+export interface MoveResult {
+  moved: MovePair[]
+  failed: { name: string; error: string }[]
+}
+
+export interface CopyResult {
+  /** paths of the new top-level items */
+  created: string[]
+}
+
+/** 'ready': can also be pasted in Windows · 'internal': only inside the app · 'too-large': too big for the Windows clipboard */
+export type ClipboardCopyResult = 'ready' | 'internal' | 'too-large'
 
 // ---- prompts the main process asks the user to answer -------------------
 

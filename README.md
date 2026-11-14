@@ -24,8 +24,18 @@
 
 - **SSH terminal** with tabs (xterm.js, 256 colours, copy/paste, resize), password, key, SSH agent
   (Windows OpenSSH agent / Pageant) and keyboard-interactive / 2FA logins
-- **SFTP file manager**: browse, upload (files, folders, drag & drop), download, rename, delete, new folder,
-  transfer progress
+- **File manager for SFTP and FTP(S)** that works the way Explorer does:
+  - drag files and whole folders from Windows into the window to upload them, onto a folder to upload into it
+  - drag files and folders out of the window onto the desktop or into an Explorer window to download them
+  - drag items onto a folder, a part of the path or the "move to enclosing folder" bar to move them
+  - cut, copy and paste with Ctrl+X / Ctrl+C / Ctrl+V or the right-click menu: inside a server, from one
+    server to another, from Windows to the server and (up to 200 MB) from the server to Windows
+  - Ctrl+Z takes back moves, renames and copies, for as long as the app is running
+  - nothing is replaced without asking: moves and copies never overwrite, uploads ask first
+  - running transfers can be cancelled, one by one or all at once; half-transferred files are removed
+  - sort by name, size or date, filter the folder (Ctrl+F), show or hide hidden files, follow links
+  - change permissions (chmod) with checkboxes or the numeric form
+- **Vault backup**: save the encrypted vault as one file and restore it on this or another PC
 - **Built-in text editor**: double-click a remote file to edit it and save it back to the server
   - several files in tabs, split view (two files or one file twice side by side), new files
   - syntax colors for about 25 file types (YAML, JSON, shell, nginx/INI configs, Dockerfile, HTML/CSS/JS/TS,
@@ -59,6 +69,10 @@ Clavium follows the Windows light / dark setting.
 | Files (SFTP) | New host |
 |---|---|
 | ![SFTP](docs/screenshots/06-sftp.png) | ![Host editor](docs/screenshots/02-host-editor.png) |
+
+| Right-click menu in the file manager | Permissions |
+|---|---|
+| ![File menu](docs/screenshots/06e-files-menu.png) | ![Permissions](docs/screenshots/06f-files-permissions.png) |
 
 | Text editor | Text editor (dark) |
 |---|---|
@@ -255,8 +269,8 @@ tests/              vitest tests incl. an in-process SSH/SFTP server; tests/e2e 
 
 ## Roadmap
 
-Jump hosts / ProxyJump · snippets · split panes · macOS & Linux builds · auto-update · German UI ·
-encrypted vault export/import · SFTP editing in an external editor
+Jump hosts / ProxyJump · snippets · search in the terminal · split panes · macOS & Linux builds · German UI ·
+SFTP editing in an external editor
 
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 

@@ -1,8 +1,9 @@
-﻿import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+﻿import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   app,
   BrowserWindow,
+  clipboard,
   Menu,
   nativeImage,
   nativeTheme,
@@ -23,6 +24,7 @@ import { McpController } from './mcpController'
 import { UiPrompter } from './prompts'
 import { TerminalManager } from './terminals'
 import { Updater } from './updater'
+import { readClipboardFiles, writeClipboardFiles } from './winclipboard'
 
 /** Real location of the executable (the portable build unpacks itself to a temp dir). */
 function exePath(): string {
@@ -89,7 +91,24 @@ function runApp(): void {
   }
 
   const terminals = new TerminalManager(vault, prompter, send)
-  const files = new FileManager(vault, prompter, send)
+  // Private folder for files that are only passing through (copies between servers, files put on
+  // the Windows clipboard). Emptied at every start and when the app quits.
+  const transferDir = join(dataDir, 'transfer-tmp')
+  const emptyTransferDir = (): void => {
+    try {
+      rmSync(transferDir, { recursive: true, force: true })
+    } catch {
+      /* a file may still be in use; the next start removes it */
+    }
+  }
+  emptyTransferDir()
+  mkdirSync(transferDir, { recursive: true })
+  const files = new FileManager(vault, prompter, send, {
+    tempRoot: transferDir,
+    readClipboardFiles,
+    writeClipboardFiles,
+    clearClipboard: () => clipboard.clear()
+  })
   const forwards = new ForwardManager(vault, prompter, () => send('fwd:changed'))
   const editor = new WindowEditorBridge(getWindow)
   const mcp = new McpController({
@@ -229,7 +248,8 @@ function runApp(): void {
     session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false))
     session.defaultSession.setPermissionCheckHandler(() => false)
 
-    registerIpc({ window: getWindow, vault, settings, audit, prompter, mcp, terminals, files, forwards, updater, editor })
+    const dragIcon = nativeImage.createFromPath(iconPath).resize({ width: 40, height: 40 })
+    registerIpc({ window: getWindow, vault, settings, audit, prompter, mcp, terminals, files, forwards, updater, editor, dragIcon: () => dragIcon })
     createWindow()
 
     if (existsSync(iconPath)) {
@@ -242,14 +262,16 @@ function runApp(): void {
     updater.start()
 
     // ---- auto-lock ----
+    // Automated tests switch it off: they run for minutes on a computer nobody is touching.
+    const autoLock = app.isPackaged || !process.env.CLAVIUM_NO_AUTOLOCK
     setInterval(() => {
       const minutes = settings.get().autoLockMinutes
-      if (minutes > 0 && vault.state() === 'unlocked' && powerMonitor.getSystemIdleTime() >= minutes * 60) {
+      if (autoLock && minutes > 0 && vault.state() === 'unlocked' && powerMonitor.getSystemIdleTime() >= minutes * 60) {
         vault.lock()
       }
     }, 20_000)
     const lockIfConfigured = (): void => {
-      if (settings.get().lockOnSystemLock && vault.state() === 'unlocked') vault.lock()
+      if (autoLock && settings.get().lockOnSystemLock && vault.state() === 'unlocked') vault.lock()
     }
     powerMonitor.on('lock-screen', lockIfConfigured)
     powerMonitor.on('suspend', lockIfConfigured)
@@ -260,6 +282,7 @@ function runApp(): void {
     prompter.cancelAll()
     terminals.closeAll()
     files.closeAll()
+    emptyTransferDir()
     forwards.stopAll()
     void mcp.shutdown()
     vault.lock()

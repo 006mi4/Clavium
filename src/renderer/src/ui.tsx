@@ -149,7 +149,7 @@ export function Sheet(props: {
 // ---------------------------------------------------------------- menus --
 
 export type MenuItem =
-  | { label: string; icon?: IconType; onSelect: () => void; destructive?: boolean; disabled?: boolean }
+  | { label: string; icon?: IconType; onSelect: () => void; destructive?: boolean; disabled?: boolean; /** keyboard shortcut shown on the right */ hint?: string }
   | 'separator'
 
 interface MenuState {
@@ -218,6 +218,7 @@ function MenuPopover({ menu, close }: { menu: MenuState; close: () => void }) {
           >
             {item.icon && <item.icon size={15} />}
             {item.label}
+            {item.hint && <span className="hint">{item.hint}</span>}
           </button>
         )
       )}

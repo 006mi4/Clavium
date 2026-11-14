@@ -28,6 +28,8 @@ export interface IpcContext {
   mcp: McpController
   terminals: TerminalManager
   files: FileManager
+  /** picture shown next to the pointer while files are dragged out of the window */
+  dragIcon: () => Electron.NativeImage
   forwards: ForwardManager
   updater: Updater
   editor: WindowEditorBridge
@@ -116,6 +118,33 @@ export function registerIpc(ctx: IpcContext): void {
   handle('vault:create', z.tuple([z.string().max(1024)]), (pw) => ctx.vault.create(pw))
   handle('vault:unlock', z.tuple([z.string().max(1024)]), (pw) => ctx.vault.unlock(pw))
   handle('vault:lock', z.tuple([]), () => ctx.vault.lock())
+  handle('vault:export', z.tuple([]), async () => {
+    const win = ctx.window()
+    if (!win) return false
+    const r = await dialog.showSaveDialog(win, {
+      title: 'Back up vault',
+      defaultPath: `Clavium-backup-${new Date().toISOString().slice(0, 10)}.clavium-vault`,
+      filters: [{ name: 'Clavium vault backup', extensions: ['clavium-vault'] }]
+    })
+    if (r.canceled || !r.filePath) return false
+    await ctx.vault.exportTo(r.filePath)
+    return true
+  })
+  handle('vault:import', z.tuple([]), async () => {
+    const win = ctx.window()
+    if (!win) return false
+    const r = await dialog.showOpenDialog(win, {
+      title: 'Restore vault from backup',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Clavium vault backup', extensions: ['clavium-vault', 'json'] },
+        { name: 'All files', extensions: ['*'] }
+      ]
+    })
+    if (r.canceled || !r.filePaths[0]) return false
+    await ctx.vault.importFrom(r.filePaths[0])
+    return true
+  })
   handle('vault:changePassword', z.tuple([z.string().max(1024), z.string().max(1024)]), (o, n) =>
     ctx.vault.changePassword(o, n)
   )
@@ -269,21 +298,43 @@ export function registerIpc(ctx: IpcContext): void {
     }
     return true
   })
-  handle('files:upload', z.tuple([id, remotePath, z.enum(['files', 'folder'])]), async (fid, dir, kind) => {
+  const localPaths = z.array(z.string().min(1).max(4096)).min(1).max(1000)
+  const entryList = z.array(entrySchema).min(1).max(1000)
+  handle('files:pickLocal', z.tuple([z.enum(['files', 'folder'])]), async (kind) => {
     const win = ctx.window()
-    if (!win) return false
+    if (!win) return []
     const r = await dialog.showOpenDialog(win, {
       title: kind === 'folder' ? 'Upload folder' : 'Upload files',
       properties: kind === 'folder' ? ['openDirectory'] : ['openFile', 'multiSelections']
     })
-    if (r.canceled || r.filePaths.length === 0) return false
-    void ctx.files.upload(fid, r.filePaths, dir)
-    return true
+    return r.canceled ? [] : r.filePaths
   })
-  handle('files:uploadPaths', z.tuple([id, remotePath, z.array(z.string().min(1).max(4096)).min(1).max(1000)]), (fid, dir, paths) => {
+  handle('files:uploadConflicts', z.tuple([id, remotePath, localPaths]), (fid, dir, paths) => ctx.files.uploadConflicts(fid, dir, paths))
+  handle('files:uploadPaths', z.tuple([id, remotePath, localPaths]), (fid, dir, paths) => {
     void ctx.files.upload(fid, paths, dir)
     return true
   })
+  handle(
+    'files:move',
+    z.tuple([id, z.array(z.object({ from: remotePath, to: remotePath })).min(1).max(1000)]),
+    (fid, pairs) => ctx.files.move(fid, pairs)
+  )
+  handle('files:copy', z.tuple([id, entryList, id, remotePath]), (src, entries, dst, dir) =>
+    ctx.files.copy(src, entries as RemoteEntry[], dst, dir)
+  )
+  handle('files:clipboardCopy', z.tuple([id, entryList, z.boolean()]), (fid, entries, forWindows) =>
+    ctx.files.copyToClipboard(fid, entries as RemoteEntry[], forWindows)
+  )
+  handle('files:clipboardFiles', z.tuple([]), () => ctx.files.clipboardFiles())
+  handle('files:dragOut', z.tuple([id, entryList]), (fid, entries) => {
+    const win = ctx.window()
+    if (!win) return null
+    return ctx.files.dragOut(fid, entries as RemoteEntry[], (file) => win.webContents.startDrag({ file, icon: ctx.dragIcon() }))
+  })
+  handle('files:dragCancel', z.tuple([]), () => ctx.files.cancelDrag())
+  handle('files:chmod', z.tuple([id, remotePath, z.number().int().min(0).max(0o777)]), (fid, p, mode) => ctx.files.chmod(fid, p, mode))
+  handle('files:cancelTransfer', z.tuple([id]), (tid) => ctx.files.cancelTransfer(tid))
+  handle('files:cancelAll', z.tuple([]), () => ctx.files.cancelAllTransfers())
   handle('files:close', z.tuple([id]), (fid) => ctx.files.close(fid))
 
   // port forwards
