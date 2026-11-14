@@ -45,7 +45,7 @@ jobs:
 
       # Lets users verify that a download was built by this workflow from this repository:
       #   gh attestation verify Clavium-Setup-x.y.z.exe --repo 006mi4/Clavium
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             dist/Clavium-Setup-*.exe
