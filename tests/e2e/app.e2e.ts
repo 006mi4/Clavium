@@ -30,9 +30,13 @@ let page: Page
 let dataDir: string
 let mcpPort = 0
 
-async function shot(name: string, alsoDark = false): Promise<void> {
+/**
+ * A picture for the README. Only the appearances the README shows are written: `true` both,
+ * `'dark'` the dark one alone, nothing the light one alone.
+ */
+async function shot(name: string, alsoDark: boolean | 'dark' = false): Promise<void> {
   await page.waitForTimeout(300)
-  await page.screenshot({ path: join(shots, `${name}.png`) })
+  if (alsoDark !== 'dark') await page.screenshot({ path: join(shots, `${name}.png`) })
   if (alsoDark) {
     await page.emulateMedia({ colorScheme: 'dark' })
     await page.waitForTimeout(300)
@@ -135,7 +139,7 @@ describe('Clavium desktop app', () => {
     await view().locator('.table td', { hasText: 'readme.txt' }).waitFor()
     expect(await view().locator('.table td.name', { hasText: 'www' }).count()).toBe(1)
     await view().locator('.table tr', { hasText: 'docker-compose.yml' }).click()
-    await shot('06-sftp', true)
+    await shot('06-sftp')
     // both sessions are listed in the sidebar
     expect(await sidebar().locator('.side-item', { hasText: HOST }).count()).toBe(2)
   })
@@ -365,7 +369,7 @@ describe('Clavium desktop app', () => {
     // copy through the context menu; the copy gets a numbered name instead of replacing anything
     await view().getByRole('button', { name: 'Enclosing Folder' }).click()
     await row('docker-compose.yml').click({ button: 'right' })
-    await shot('06e-files-menu', true)
+    await shot('06e-files-menu')
     await page.getByRole('menuitem', { name: /^Copy/ }).click()
     await view().locator('.file-area').click({ button: 'right', position: { x: 600, y: 420 } })
     await page.getByRole('menuitem', { name: /^Paste/ }).click()
@@ -927,7 +931,7 @@ describe('Clavium desktop app', () => {
     await view().getByRole('button', { name: 'Hide Token' }).click()
     await view().getByRole('button', { name: 'Claude Code' }).click()
     expect(await config.innerText()).not.toContain(token)
-    await shot('07-ai-access', true)
+    await shot('07-ai-access')
   })
 
   it('lets an MCP client run a command only after the user approves it', async () => {
@@ -940,7 +944,7 @@ describe('Clavium desktop app', () => {
 
     const call = c.callTool({ name: 'run_command', arguments: { host: HOST, command: 'sudo systemctl restart nginx' } })
     await page.getByText(/AI request/).waitFor()
-    await shot('08-ai-approval', true)
+    await shot('08-ai-approval', 'dark')
     await page.getByRole('button', { name: 'Allow Once' }).click()
     const result = (await call) as { content: { text: string }[] }
     expect(result.content[0].text).toContain('ran: sudo systemctl restart nginx')
@@ -970,7 +974,7 @@ describe('Clavium desktop app', () => {
     await view().getByText('An AI assistant changed this text.').waitFor()
     expect(await view().getByLabel('Contents of readme.txt').inputValue()).toBe('Greetings from the test server\n')
     await view().getByText('Edited').waitFor()
-    await shot('08b-ai-editor', true)
+    await shot('08b-ai-editor')
     await view().getByRole('button', { name: 'Save', exact: true }).click()
     await view().getByText('Saved', { exact: true }).waitFor()
     expect(readFileSync(join(srv.root, 'readme.txt'), 'utf8')).toBe('Greetings from the test server\n')
@@ -1025,7 +1029,7 @@ describe('Clavium desktop app', () => {
 
     await sidebar().getByRole('button', { name: 'Settings' }).click()
     await view().getByText('Lock automatically').waitFor()
-    await shot('11-settings', true)
+    await shot('11-settings', 'dark')
 
     // back up the vault, then restore it: the app locks and opens again with the same password
     const backup = join(mkdtempSync(join(tmpdir(), 'clavium-e2e-backup-')), 'backup.clavium-vault')
@@ -1055,6 +1059,6 @@ describe('Clavium desktop app', () => {
 
     await sidebar().getByRole('button', { name: /Lock Vault/ }).click()
     await page.getByText('Clavium Is Locked').waitFor()
-    await shot('12-locked', true)
+    await shot('12-locked', 'dark')
   })
 })

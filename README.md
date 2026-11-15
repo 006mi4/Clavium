@@ -131,6 +131,10 @@ Clavium follows the light / dark setting of Windows and macOS.
 |---|---|
 | ![File menu](docs/screenshots/06e-files-menu.png) | ![Permissions](docs/screenshots/06f-files-permissions.png) |
 
+| Suggestions in the terminal | Several connections in one tab |
+|---|---|
+| ![Suggestions](docs/screenshots/13-terminal-suggestions.png) | ![Workspace](docs/screenshots/14-split-view.png) |
+
 | Text editor | Text editor (dark) |
 |---|---|
 | ![Editor](docs/screenshots/06b-editor.png) | ![Editor, dark](docs/screenshots/06b-editor-dark.png) |
