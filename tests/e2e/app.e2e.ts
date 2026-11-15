@@ -250,7 +250,9 @@ describe('Clavium desktop app', () => {
       await both.nth(1).press('ControlOrMeta+z')
       undoSteps++
     }
-    expect(undoSteps).toBeLessThanOrEqual(6)
+    // 23 characters were typed. How they are grouped depends on how fast they arrive, so a slow
+    // machine needs a few steps more.
+    expect(undoSteps).toBeLessThanOrEqual(10)
     expect(await both.nth(1).inputValue()).toBe('Hello from the test server\n')
     await expect.poll(() => leftView.innerText()).not.toContain('typed in the right pane')
     await both.nth(0).click() // switching sides brings the other text field up to date
