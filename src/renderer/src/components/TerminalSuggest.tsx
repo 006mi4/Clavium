@@ -33,7 +33,7 @@ interface Popup {
 export interface SuggestHandle {
   /** called with what the user typed, before it is sent to the server */
   onInput: (data: string) => void
-  /** called for every key press in the terminal; false: the key was used here */
+  /** called for every key event in the terminal; false: the key was used here */
   onKey: (e: KeyboardEvent) => boolean
   /** the terminal drew new output */
   onOutput: () => void
@@ -105,6 +105,26 @@ function readInput(term: Terminal, marker: IMarker, startCol: number): string | 
   }
   return text
 }
+
+/**
+ * The whole line that was sent with Enter, read once the screen shows all of it. Unlike
+ * `readInput` it does not stop at the cursor, which has moved on by then.
+ */
+function readSentLine(term: Terminal, marker: IMarker, startCol: number): string | null {
+  const buf = term.buffer.active
+  const first = marker.line
+  if (first < 0) return null
+  let text = ''
+  for (let y = first; y < first + 7; y++) {
+    const line = buf.getLine(y)
+    if (!line || (y > first && !line.isWrapped)) break
+    text += line.translateToString(false, y === first ? startCol : 0)
+  }
+  return text
+}
+
+/** How long the last characters of a line may take to come back from the server before it is read. */
+const SENT_LINE_MS = 250
 
 export function useTerminalSuggest(opts: {
   term: RefObject<Terminal | null>
@@ -300,10 +320,21 @@ export function useTerminalSuggest(opts: {
           e.endLine()
           hide()
         } else if (data === '\r' || data === '\n') {
-          // remember the line for this session; a line typed into a program is not a command
+          // Remember the line for this session; a line typed into a program is not a command.
+          // The last keys may not have come back from the server yet, so the line is read a
+          // moment later, from the place where it started to its end.
           if (e.marker && !e.context?.busy && term.buffer.active.type === 'normal') {
-            const line = readInput(term, e.marker, e.startCol)?.trim()
-            if (line && line.length <= 500) e.typedHistory = [line, ...e.typedHistory.filter((l) => l !== line)].slice(0, 200)
+            const marker = e.marker
+            const startCol = e.startCol
+            e.marker = null
+            setTimeout(() => {
+              const line = term.buffer.active.type === 'normal' ? readSentLine(term, marker, startCol)?.trim() : undefined
+              marker.dispose()
+              if (!line || line.length > 500) return
+              e.typedHistory = [line, ...e.typedHistory.filter((l) => l !== line)].slice(0, 200)
+              // the next line may already be under way and want to offer this one
+              schedule()
+            }, SENT_LINE_MS)
           }
           e.endLine()
           hide()
@@ -324,14 +355,26 @@ export function useTerminalSuggest(opts: {
       },
       onKey(ev) {
         const e = engine.current
-        if (ev.type !== 'keydown' || !enabledRef.current) return true
+        if (!enabledRef.current) return true
+        const opens = ev.ctrlKey && !ev.altKey && !ev.metaKey && ev.code === 'Space'
+        // The key that opens the list must not also reach the shell as a character: the terminal
+        // would send it with the key press that follows the key down.
+        if (opens && ev.type === 'keypress') return false
+        if (ev.type !== 'keydown') return true
         const used = (): boolean => {
           ev.preventDefault()
           return false
         }
-        if (ev.ctrlKey && !ev.altKey && !ev.metaKey && ev.code === 'Space') {
+        if (opens) {
           e.forced = true
           e.quiet = false
+          // Asked for before the screen showed the new prompt: the place that was noted for the
+          // start of the line is on an older line. Note it again where the cursor is now.
+          const term = opts.term.current
+          if (e.marker && term && readInput(term, e.marker, e.startCol) === null) {
+            e.marker.dispose()
+            e.marker = null
+          }
           if (!e.marker) beginLine()
           refresh()
           return used()
