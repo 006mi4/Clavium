@@ -21,6 +21,8 @@ Part of Clavium since 0.1.11.
   client, another ssh), nothing is suggested.
 - Tab and Enter wait until the characters typed so far have come back from the server, so a fast typist never
   gets a suggestion that belongs to an older state of the line.
+- `Ctrl+Space` opens the list where nothing is typed yet: the last commands on an empty line, the programs
+  after `sudo ` or a pipe.
 - Off for screens, container logs and shells inside containers. Setting: "Suggestions in the terminal".
 
 **Workspaces** (`src/shared/layout.ts`, `src/renderer/src/App.tsx`, `src/renderer/src/components/Workspaces.tsx`)

@@ -90,6 +90,22 @@ describe('suggestions', () => {
     expect(labels('', d)).toEqual([])
   })
 
+  it('has something to show where nothing is typed yet, once the list is asked for with the shortcut', () => {
+    const d = data({ history: ['git pull', 'ls -la', 'git pull'], commands: ['git', 'ls'] })
+    const asked = (input: string, with_: CompletionData = d): string[] => suggest(parseLine(input), with_, '/srv', true).map((s) => s.label)
+    // an empty line: the last commands, and only those
+    expect(asked('')).toEqual(['git pull', 'ls -la'])
+    expect(keystrokes(suggest(parseLine(''), d, '/srv', true)[0], parseLine(''))).toBe('git pull')
+    // without a history the programs are better than nothing
+    expect(asked('', data({ commands: ['git', 'ls'] }))).toContain('git')
+    // where a program is expected after something else
+    expect(asked('sudo ')).toContain('git')
+    expect(asked('cat x | ')).toContain('ls')
+    // subcommands need no shortcut
+    expect(labels('git ')).toContain('checkout')
+    expect(labels('sudo ', d)).toEqual([])
+  })
+
   it('types a suggestion with as few keys as possible', () => {
     const ctx = parseLine('git Ch')
     const s = suggest(ctx, data(), '/srv')[0]

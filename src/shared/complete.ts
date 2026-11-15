@@ -266,9 +266,9 @@ function commandSuggestions(ctx: LineContext, data: CompletionData): Suggestion[
   return match(all, ctx.value, (n) => n, true).map((n) => word('command', ctx, n, SPECS[n]?.d))
 }
 
-function historySuggestions(ctx: LineContext, data: CompletionData, limit: number): Suggestion[] {
+function historySuggestions(ctx: LineContext, data: CompletionData, limit: number, evenEmpty = false): Suggestion[] {
   const typed = ctx.input.trimStart()
-  if (!typed) return []
+  if (!typed && !evenEmpty) return []
   const seen = new Set<string>()
   const out: Suggestion[] = []
   for (const line of data.history) {
@@ -280,14 +280,19 @@ function historySuggestions(ctx: LineContext, data: CompletionData, limit: numbe
   return out
 }
 
-/** The suggestions for a line, best first. Lists that are not loaded yet are simply missing. */
-export function suggest(ctx: LineContext, data: CompletionData, cwd: string): Suggestion[] {
+/**
+ * The suggestions for a line, best first. Lists that are not loaded yet are simply missing.
+ * `asked`: the user opened the list with the shortcut. Then there is something to show even where
+ * nothing is typed yet: the last commands on an empty line, the programs after "sudo " or a pipe.
+ */
+export function suggest(ctx: LineContext, data: CompletionData, cwd: string, asked = false): Suggestion[] {
   if (ctx.value.startsWith('$')) return []
   const out: Suggestion[] = []
   if (!ctx.command && !ctx.redirect) {
-    out.push(...historySuggestions(ctx, data, 5))
+    out.push(...historySuggestions(ctx, data, asked && !ctx.input.trim() ? 10 : 5, asked))
     if (ctx.value.includes('/')) out.push(...pathSuggestions(ctx, data, cwd, false))
-    else if (ctx.value) out.push(...commandSuggestions(ctx, data))
+    // On a line that is still empty the last commands say more than a list of every program.
+    else if (ctx.value || (asked && (ctx.input.trim() || out.length === 0))) out.push(...commandSuggestions(ctx, data))
   } else {
     const { spec, root, sources } = sourcesFor(ctx)
     if (ctx.value.startsWith('-') && !ctx.redirect) {

@@ -183,7 +183,8 @@ export function useTerminalSuggest(opts: {
         dir: (path) => e.lists.get(`dir:${path}`)?.items,
         dynamic: (kind: DynamicKind, at) => e.lists.get(`${kind}:${at}`)?.items
       },
-      cwd
+      cwd,
+      e.forced
     )
     if (items.length === 0) return hide()
     // where the cursor is, in pixels of the terminal area
@@ -240,7 +241,11 @@ export function useTerminalSuggest(opts: {
       api.term
         .completeHistory(id)
         .then(
-          (lines) => (e.remoteHistory = lines),
+          (lines) => {
+            e.remoteHistory = lines
+            // a list that was asked for on an empty line is waiting for exactly this
+            if (e.forced) schedule()
+          },
           () => undefined
         )
         .finally(() => e.pending.delete('history'))

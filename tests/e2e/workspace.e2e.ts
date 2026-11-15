@@ -135,6 +135,16 @@ describe('workspaces and terminal suggestions', () => {
     await page.keyboard.press('Control+c')
     await expect.poll(() => list.count()).toBe(0)
     await page.keyboard.press('Enter')
+
+    // asked for with the shortcut on an empty line: the last commands, the newest first
+    await page.waitForTimeout(300)
+    await page.keyboard.press('Control+Space')
+    await list.getByRole('option').first().waitFor()
+    expect((await list.getByRole('option').allInnerTexts()).slice(0, 2)).toEqual(['cat report\\ 2026.txt', 'git checkout feature/login'])
+    await page.keyboard.press('Tab')
+    await expect.poll(async () => (await panes().locator('.xterm-rows').innerText()).trimEnd().endsWith('$ cat report\\ 2026.txt')).toBe(true)
+    await page.keyboard.press('Control+c')
+    await page.keyboard.press('Enter')
   })
 
   it('shows nothing while the setting is off', async () => {
