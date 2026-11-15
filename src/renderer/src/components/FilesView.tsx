@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type
 import {
   ArrowDown,
   ArrowUp,
-  Ban,
   ClipboardPaste,
   Copy,
   CornerLeftUp,
@@ -27,8 +26,9 @@ import {
   Upload,
   X
 } from 'lucide-react'
-import type { HostSummary, MovePair, RemoteEntry, TransferProgress } from '@shared/types'
+import type { HostSummary, MovePair, RemoteEntry } from '@shared/types'
 import { api, on } from '../api'
+import { TransferPanel } from './Transfers'
 import { Empty, IconButton, Sheet, Toolbar, formatBytes, formatDate, useConfirm, useMenu, useToast, type MenuItem } from '../ui'
 import { StatusDot, type ConnState } from './TerminalView'
 import { registerEditorSession } from '../editor/registry'
@@ -131,7 +131,6 @@ export function FilesView(props: {
   const ownDragRef = useRef<RemoteEntry[] | null>(null)
   const [, rerender] = useState(0)
   useEffect(() => subscribeFileOps(() => rerender((n) => n + 1)), [])
-  const [transfers, setTransfers] = useState<Map<string, TransferProgress>>(new Map())
   const [attempt, setAttempt] = useState(0)
   const [ask, setAsk] = useState<{ title: string; label: string; value: string; action: string; ok: (v: string) => void } | null>(null)
   const [mode, setMode] = useState<'list' | 'editor'>('list')
@@ -240,10 +239,9 @@ export function FilesView(props: {
   }, [attempt])
 
   useEffect(() => {
-    const offProg = on('files:progress', (p: TransferProgress) => {
-      setTransfers((m) => new Map(m).set(p.transferId, p))
-      if (p.done && p.direction !== 'download' && !p.error) void load(cwdRef.current)
-      if (p.done && p.error && !p.cancelled) toast.error(`${p.name}: ${p.error}`)
+    // an upload or a copy has put something on this server
+    const offProg = on('files:changed', (id: string) => {
+      if (id === sidRef.current) void load(cwdRef.current)
     })
     const offClosed = on('files:closed', (id: string) => {
       if (id === sidRef.current) {
@@ -375,16 +373,6 @@ export function FilesView(props: {
   const uploadTo = async (dir: string, paths: string[]): Promise<void> => {
     if (!sid || paths.length === 0) return
     try {
-      const clash = await api.files.uploadConflicts(sid, dir, paths)
-      if (clash.length) {
-        const ok = await confirm({
-          title: clash.length === 1 ? `Replace “${clash[0]}”?` : `Replace ${clash.length} Items?`,
-          message: `${dir} already contains ${clash.length === 1 ? 'an item' : 'items'} with the same name. Files are replaced and folders are merged. This can’t be undone.`,
-          confirmLabel: 'Replace',
-          destructive: true
-        })
-        if (!ok) return
-      }
       await api.files.uploadPaths(sid, dir, paths)
     } catch (e) {
       toast.error(e)
@@ -584,8 +572,6 @@ export function FilesView(props: {
 
   const cutPaths = new Set(getRemoteClip()?.mode === 'cut' && getRemoteClip()?.hostId === props.host.id ? getRemoteClip()!.entries.map((e) => e.path) : [])
 
-  const transferList = [...transfers.values()].slice(-20).reverse()
-  const running = transferList.filter((t) => !t.done).length
   const connected = !!sid
 
   return (
@@ -809,37 +795,7 @@ export function FilesView(props: {
           </>
         )}
 
-        {transferList.length > 0 && (
-          <div className="transfers">
-            <header>
-              <span>{running > 0 ? `Transferring ${running} ${running === 1 ? 'Item' : 'Items'}` : 'Transfers Complete'}</span>
-              <span style={{ display: 'flex' }}>
-                {running > 0 && <IconButton icon={Ban} label="Cancel All Transfers" onClick={() => void api.files.cancelAll()} />}
-                <IconButton icon={X} label="Clear Finished" onClick={() => setTransfers(new Map([...transfers].filter(([, t]) => !t.done)))} />
-              </span>
-            </header>
-            <div className="items">
-              {transferList.map((t) => (
-                <div className="transfer" key={t.transferId}>
-                  <div className="line">
-                    <span>{t.name}</span>
-                    <span>
-                      {t.cancelled ? 'Cancelled' : t.error ? 'Failed' : t.done ? (t.direction === 'upload' ? 'Uploaded' : t.direction === 'copy' ? 'Copied' : 'Downloaded') : t.total ? `${formatBytes(t.transferred)} of ${formatBytes(t.total)}` : formatBytes(t.transferred)}
-                      {!t.done && (
-                        <button className="cancel" title={`Cancel ${t.name}`} aria-label={`Cancel ${t.name}`} onClick={() => void api.files.cancelTransfer(t.transferId)}>
-                          <X size={12} />
-                        </button>
-                      )}
-                    </span>
-                  </div>
-                  <div className={`bar ${t.cancelled ? 'cancelled' : t.error ? 'failed' : t.done ? 'done' : ''}`}>
-                    <div style={{ width: `${t.cancelled ? 0 : t.done ? 100 : t.total ? Math.min(100, (t.transferred / t.total) * 100) : 4}%` }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        <TransferPanel />
       </div>
 
       </div>

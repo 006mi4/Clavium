@@ -1,30 +1,20 @@
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, extname, join, posix, resolve, sep } from 'node:path'
-import type { ClipboardCopyResult, CopyResult, HostRecord, MovePair, MoveResult, RemoteEntry, TransferProgress } from '@shared/types'
+import { extname, join, resolve, sep } from 'node:path'
+import { DEFAULT_TRANSFER_SETTINGS, type ClipboardCopyResult, type CopyResult, type ExistingRule, type HostRecord, type MovePair, type MoveResult, type QueueAction, type RemoteEntry, type TransferSettings, type TransferSnapshot } from '@shared/types'
 import { randomId } from './core/crypto'
 import { driveRoots, watchForDrop } from './core/dropwatch'
-import { conflictsIn, copyEntries, measure, moveEntries } from './core/transfer'
+import { safeLocalName, TransferQueue } from './core/queue'
+import { copyEntries, measure, moveEntries } from './core/transfer'
 import type { Prompter } from './core/prompter'
 import { openRemoteFs, type RemoteFs } from './core/remotefs'
 import type { Vault } from './core/vault'
 
-type Send = (channel: 'files:progress' | 'files:closed', ...args: unknown[]) => void
+type Send = (channel: 'files:queue' | 'files:changed' | 'files:closed', ...args: unknown[]) => void
 
-const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i
-
-/**
- * Turn a remote file name into a safe local file name. A malicious server could
- * otherwise return names like "..\\..\\AppData\\evil.exe" and write outside the target folder.
- */
-export function safeLocalName(remoteName: string): string {
-  let name = remoteName.replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').replace(/[. ]+$/, '')
-  if (name === '' || name === '.' || name === '..') name = '_'
-  if (WINDOWS_RESERVED.test(name)) name = '_' + name
-  return name.slice(0, 200)
-}
+export { safeLocalName }
 
 /** One spelling per path: Windows may hand out the short form (RUNNER~1) of a folder name. */
 function canonical(path: string): string {
@@ -77,20 +67,40 @@ export class FileManager {
   private clipDir: string | null = null
   private clipJob = 0
   private drag: { cancel: () => void } | null = null
+  private readonly queue: TransferQueue
 
   constructor(
     private readonly vault: Vault,
     private readonly prompter: Prompter,
     private readonly send: Send,
-    private readonly desktop: Desktop = NO_DESKTOP
-  ) {}
+    private readonly desktop: Desktop = NO_DESKTOP,
+    settings: () => TransferSettings = () => DEFAULT_TRANSFER_SETTINGS
+  ) {
+    this.queue = new TransferQueue({
+      settings,
+      // Both fire from timers, possibly after the window is gone.
+      emit: (snapshot) => this.quietly(() => this.send('files:queue', snapshot)),
+      changed: (sessionId) => this.quietly(() => this.send('files:changed', sessionId)),
+      alive: (sessionId) => this.sessions.has(sessionId)
+    })
+  }
+
+  private quietly(fn: () => void): void {
+    try {
+      fn()
+    } catch {
+      /* nobody is listening any more */
+    }
+  }
 
   async open(host: HostRecord): Promise<string> {
     const fs = await openRemoteFs(host, { vault: this.vault, prompter: this.prompter, interactive: true })
     const id = randomId()
     this.sessions.set(id, fs)
     fs.onClose(() => {
-      if (this.sessions.delete(id)) this.send('files:closed', id)
+      if (!this.sessions.delete(id)) return
+      this.queue.sessionClosed(id)
+      this.send('files:closed', id)
     })
     return id
   }
@@ -104,6 +114,7 @@ export class FileManager {
   close(id: string): void {
     const fs = this.sessions.get(id)
     this.sessions.delete(id)
+    this.queue.sessionClosed(id)
     fs?.close()
   }
 
@@ -113,7 +124,7 @@ export class FileManager {
       this.close(id)
       this.send('files:closed', id)
     }
-    this.cancelAllTransfers()
+    this.queueAction('cancel')
     this.drag?.cancel()
     void this.forgetClipboard()
   }
@@ -128,15 +139,6 @@ export class FileManager {
     return moveEntries(this.get(id), pairs)
   }
 
-  /** Which of these local files or folders would replace something in `remoteDir`. */
-  uploadConflicts(id: string, remoteDir: string, localPaths: string[]): Promise<string[]> {
-    return conflictsIn(
-      this.get(id),
-      remoteDir,
-      localPaths.map((p) => basename(p))
-    )
-  }
-
   /** Copy within one server or from one server to another. */
   async copy(srcId: string, entries: RemoteEntry[], dstId: string, dstDir: string): Promise<CopyResult> {
     const src = this.get(srcId)
@@ -146,22 +148,25 @@ export class FileManager {
     const round = this.cancelRound
     try {
       for (const entry of entries) {
-        const transferId = randomId()
-        const report = (transferred: number, total: number, done = false, error?: string, cancelled = false): void =>
-          this.progress({ transferId, name: entry.name, direction: 'copy', transferred, total, done, error, cancelled })
         if (round !== this.cancelRound) break
+        let cancel = (): void => undefined
+        const shown = this.queue.external('copy', entry.name, entry.path, entry.size, () => cancel())
         try {
-          report(0, entry.size)
-          const outcome = await this.job(transferId, [src, dst], async ([s, d], cancelled) => {
-            created.push(...(await copyEntries(s, d, [entry], dstDir, tmp, (_e, t, total) => report(t, total), cancelled)))
-          })
-          report(entry.size, entry.size, true, undefined, outcome === 'cancelled')
+          const outcome = await this.job(
+            [src, dst],
+            async ([s, d], cancelled) => {
+              created.push(...(await copyEntries(s, d, [entry], dstDir, tmp, (_e, t, total) => shown.progress(t, total), cancelled)))
+            },
+            (c) => (cancel = c)
+          )
+          shown.finish(outcome)
         } catch (e) {
-          report(0, entry.size, true, (e as Error).message)
+          shown.finish('failed', (e as Error).message)
         }
       }
     } finally {
       await rm(tmp, { recursive: true, force: true })
+      this.send('files:changed', dstId)
     }
     return { created }
   }
@@ -197,7 +202,7 @@ export class FileManager {
     try {
       for (const entry of entries) {
         if (entry.type !== 'dir' && entry.type !== 'file') continue
-        staged.push(await this.downloadRecursive(fs, entry, dir, () => undefined, 0))
+        staged.push(await this.stage(fs, entry, dir, 0))
       }
       if (job !== this.clipJob) throw new Error('superseded')
       // Set before the clipboard changes: a paste that arrives while the clipboard is being
@@ -278,36 +283,42 @@ export class FileManager {
     this.drag?.cancel()
   }
 
-  // ------------------------------------------------- download and upload ----
-
-  private progress(p: TransferProgress): void {
-    this.send('files:progress', p)
+  /** Fetch a file or folder into a private folder, without showing it as a transfer. */
+  private async stage(fs: RemoteFs, entry: RemoteEntry, localDir: string, depth: number): Promise<string> {
+    if (depth > 64) throw new Error('Directory tree too deep')
+    const local = uniqueLocalPath(localDir, safeLocalName(entry.name))
+    if (entry.type === 'dir') {
+      await mkdir(local, { recursive: true })
+      for (const child of await fs.list(entry.path)) await this.stage(fs, child, local, depth + 1)
+    } else if (entry.type === 'file') {
+      await fs.download(entry.path, local)
+    }
+    // links and special files are skipped on purpose
+    return local
   }
 
-  /** Transfers that are running right now, by transfer id. */
-  private jobs = new Map<string, { cancel: () => void }>()
-  /** Raised by "cancel all", so that queued items of a running batch don't start. */
+  // ------------------------------------------------- download and upload ----
+
+  /** Raised by "cancel all", so that the remaining items of a running copy don't start. */
   private cancelRound = 0
 
   /**
-   * Run one transfer on connections of its own, so it can be stopped: cancelling closes those
-   * connections, which ends the transfer at once and leaves the session the user browses with
-   * alone. Without a second connection (some FTP servers allow only one) the transfer still
+   * Run one copy on connections of its own, so it can be stopped: cancelling closes those
+   * connections, which ends the copy at once and leaves the session the user browses with
+   * alone. Without a second connection (some FTP servers allow only one) the copy still
    * runs, and cancelling takes effect before the next file.
    */
   private async job(
-    transferId: string,
     sources: RemoteFs[],
-    run: (handles: RemoteFs[], cancelled: () => boolean) => Promise<void>
+    run: (handles: RemoteFs[], cancelled: () => boolean) => Promise<void>,
+    onCancel: (cancel: () => void) => void
   ): Promise<'done' | 'cancelled'> {
     const forks = new Map<RemoteFs, RemoteFs | null>()
     let cancelled = false
     const closeForks = (): void => forks.forEach((f) => f?.close())
-    this.jobs.set(transferId, {
-      cancel: () => {
-        cancelled = true
-        closeForks()
-      }
+    onCancel(() => {
+      cancelled = true
+      closeForks()
     })
     try {
       for (const fs of sources) if (!forks.has(fs)) forks.set(fs, await fs.fork().catch(() => null))
@@ -321,128 +332,35 @@ export class FileManager {
       if (cancelled) return 'cancelled'
       throw e
     } finally {
-      this.jobs.delete(transferId)
       closeForks()
     }
   }
 
-  cancelTransfer(transferId: string): void {
-    this.jobs.get(transferId)?.cancel()
+  /** Download files and folders into `localDir` (or exactly to `localFile` for a single file). Resolves when all of it has settled. */
+  download(id: string, entries: RemoteEntry[], target: { localDir?: string; localFile?: string }, rule?: ExistingRule): Promise<void> {
+    return this.queue.download(id, this.get(id), entries, target, rule)
   }
 
-  cancelAllTransfers(): void {
-    this.cancelRound++
-    for (const job of [...this.jobs.values()]) job.cancel()
+  /** Upload local files and folders into `remoteDir`. Resolves when all of it has settled. */
+  upload(id: string, localPaths: string[], remoteDir: string, rule?: ExistingRule): Promise<void> {
+    return this.queue.upload(id, this.get(id), localPaths, remoteDir, rule)
   }
 
-  /** Download files/folders into `localDir` (or exactly to `localFile` for a single file). */
-  async download(id: string, entries: RemoteEntry[], target: { localDir?: string; localFile?: string }): Promise<void> {
-    const fs = this.get(id)
-    const round = this.cancelRound
-    for (const entry of entries) {
-      if (round !== this.cancelRound) return
-      const transferId = randomId()
-      const report = (transferred: number, total: number, extra: Partial<TransferProgress> = {}): void =>
-        this.progress({ transferId, name: entry.name, direction: 'download', transferred, total, done: false, ...extra })
-      try {
-        report(0, entry.size)
-        const outcome = await this.job(transferId, [fs], async ([h], cancelled) => {
-          if (target.localFile && entries.length === 1 && entry.type !== 'dir') {
-            await h.download(entry.path, target.localFile, (t, tot) => report(t, tot)).catch(async (e) => {
-              await rm(target.localFile!, { force: true })
-              throw e
-            })
-          } else if (target.localDir) {
-            await this.downloadRecursive(h, entry, target.localDir, (t, tot) => report(t, tot), 0, cancelled)
-          }
-        })
-        report(entry.size, entry.size, { done: true, cancelled: outcome === 'cancelled' })
-      } catch (e) {
-        report(0, entry.size, { done: true, error: (e as Error).message })
-      }
-    }
+  /** Pause, resume, retry, cancel or move one transfer, or all of them when no id is given. */
+  queueAction(action: QueueAction, transferId?: string): void {
+    if (action === 'cancel' && !transferId) this.cancelRound++
+    this.queue.act(action, transferId)
   }
 
-  private async downloadRecursive(
-    fs: RemoteFs,
-    entry: RemoteEntry,
-    localDir: string,
-    report: (t: number, total: number) => void,
-    depth: number,
-    cancelled: () => boolean = () => false
-  ): Promise<string> {
-    if (depth > 64) throw new Error('Directory tree too deep')
-    if (cancelled()) throw new Error('Cancelled')
-    const local = uniqueLocalPath(localDir, safeLocalName(entry.name))
-    if (entry.type === 'dir') {
-      await mkdir(local, { recursive: true })
-      for (const child of await fs.list(entry.path)) {
-        await this.downloadRecursive(fs, child, local, report, depth + 1, cancelled)
-      }
-    } else if (entry.type === 'file') {
-      // a file that did not arrive completely is not left behind
-      await fs.download(entry.path, local, report).catch(async (e) => {
-        await rm(local, { force: true })
-        throw e
-      })
-    }
-    // links and special files are skipped on purpose
-    return local
+  answerConflict(transferId: string, rule: Exclude<ExistingRule, 'ask'>, all: boolean): void {
+    this.queue.answer(transferId, rule, all)
   }
 
-  async upload(id: string, localPaths: string[], remoteDir: string): Promise<void> {
-    const fs = this.get(id)
-    const round = this.cancelRound
-    for (const localPath of localPaths) {
-      if (round !== this.cancelRound) return
-      const transferId = randomId()
-      const name = basename(localPath)
-      const report = (transferred: number, total: number, extra: Partial<TransferProgress> = {}): void =>
-        this.progress({ transferId, name, direction: 'upload', transferred, total, done: false, ...extra })
-      try {
-        const st = await stat(localPath)
-        report(0, st.size)
-        const outcome = await this.job(transferId, [fs], ([h], cancelled) =>
-          this.uploadRecursive(h, fs, localPath, posix.join(remoteDir, name), (t, tot) => report(t, tot), 0, cancelled)
-        )
-        report(st.size, st.size, { done: true, cancelled: outcome === 'cancelled' })
-      } catch (e) {
-        report(0, 0, { done: true, error: (e as Error).message })
-      }
-    }
+  clearFinishedTransfers(): void {
+    this.queue.clearFinished()
   }
 
-  /** @param main the session of the user, used to tidy up after a cancelled file */
-  private async uploadRecursive(
-    fs: RemoteFs,
-    main: RemoteFs,
-    localPath: string,
-    remotePath: string,
-    report: (t: number, total: number) => void,
-    depth: number,
-    cancelled: () => boolean
-  ): Promise<void> {
-    if (depth > 64) throw new Error('Directory tree too deep')
-    if (cancelled()) throw new Error('Cancelled')
-    const st = await stat(localPath)
-    if (st.isDirectory()) {
-      await fs.mkdir(remotePath).catch(() => undefined) // may already exist
-      for (const child of await readdir(localPath)) {
-        await this.uploadRecursive(fs, main, join(localPath, child), posix.join(remotePath, child), report, depth + 1, cancelled)
-      }
-    } else if (st.isFile()) {
-      let started = false
-      await fs
-        .upload(localPath, remotePath, (t, total) => {
-          started = true
-          report(t, total)
-        })
-        .catch(async (e) => {
-          // Half of a file is worse than no file. Only when the user stopped a running upload:
-          // after any other error the file on the server may be an older, intact one.
-          if (cancelled() && started) await main.remove(remotePath, false).catch(() => undefined)
-          throw e
-        })
-    }
+  transfers(): TransferSnapshot {
+    return this.queue.snapshot()
   }
 }

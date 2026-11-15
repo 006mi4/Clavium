@@ -11,6 +11,7 @@ import { Logo } from './components/Logo'
 import { McpPage } from './components/McpPage'
 import { ActivityPage, KeysPage, KnownHostsPage, SettingsPage } from './components/Pages'
 import { PromptHost } from './components/PromptHost'
+import { TransferHost } from './components/Transfers'
 import { StatusDot, TerminalView, type ConnState } from './components/TerminalView'
 import { IconButton, useConfirm, useToast, type IconType } from './ui'
 import { keys as shortcutLabel, mod } from './platform'
@@ -355,6 +356,7 @@ export function App() {
           </div>
         ))}
       </main>
+      <TransferHost />
       <PromptHost />
     </div>
     </>

@@ -349,7 +349,6 @@ export function registerIpc(ctx: IpcContext): void {
     })
     return r.canceled ? [] : r.filePaths
   })
-  handle('files:uploadConflicts', z.tuple([id, remotePath, localPaths]), (fid, dir, paths) => ctx.files.uploadConflicts(fid, dir, paths))
   handle('files:uploadPaths', z.tuple([id, remotePath, localPaths]), (fid, dir, paths) => {
     void ctx.files.upload(fid, paths, dir)
     return true
@@ -373,8 +372,16 @@ export function registerIpc(ctx: IpcContext): void {
   })
   handle('files:dragCancel', z.tuple([]), () => ctx.files.cancelDrag())
   handle('files:chmod', z.tuple([id, remotePath, z.number().int().min(0).max(0o777)]), (fid, p, mode) => ctx.files.chmod(fid, p, mode))
-  handle('files:cancelTransfer', z.tuple([id]), (tid) => ctx.files.cancelTransfer(tid))
-  handle('files:cancelAll', z.tuple([]), () => ctx.files.cancelAllTransfers())
+  handle('files:queueGet', z.tuple([]), () => ctx.files.transfers())
+  handle(
+    'files:queueAction',
+    z.tuple([z.enum(['pause', 'resume', 'retry', 'cancel', 'top', 'up', 'down', 'bottom']), id.nullable()]),
+    (action, tid) => ctx.files.queueAction(action, tid ?? undefined)
+  )
+  handle('files:queueAnswer', z.tuple([id, z.enum(['overwrite', 'skip', 'rename', 'newer', 'resume']), z.boolean()]), (tid, rule, all) =>
+    ctx.files.answerConflict(tid, rule, all)
+  )
+  handle('files:queueClear', z.tuple([]), () => ctx.files.clearFinishedTransfers())
   handle('files:close', z.tuple([id]), (fid) => ctx.files.close(fid))
 
   // port forwards

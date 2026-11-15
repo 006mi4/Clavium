@@ -52,8 +52,13 @@
   - cut, copy and paste with Ctrl+X / Ctrl+C / Ctrl+V or the right-click menu: inside a server, from one
     server to another, from your computer to the server and (up to 200 MB) from the server to your computer
   - Ctrl+Z takes back moves, renames and copies, for as long as the app is running
-  - nothing is replaced without asking: moves and copies never overwrite, uploads ask first
-  - running transfers can be cancelled, one by one or all at once; half-transferred files are removed
+  - a transfer queue: several files at the same time (3 by default), with speed and remaining time, an
+    optional speed limit, and pause, resume, retry, reorder and cancel for each transfer or for all of them
+  - interrupted transfers continue where they stopped instead of starting again (SFTP and FTP)
+  - nothing is replaced without asking: moves and copies never overwrite; when a transferred file already
+    exists you choose between replace, skip, keep both, replace if newer and continue, once or for all files
+  - modification times are kept, and new files on the server keep their permissions
+  - one file that fails does not stop a folder: the rest goes on and the failures are listed for a retry
   - sort by name, size or date, filter the folder (Ctrl+F), show or hide hidden files, follow links
   - change permissions (chmod) with checkboxes or the numeric form
 - **Vault backup**: save the encrypted vault as one file and restore it on this or another PC

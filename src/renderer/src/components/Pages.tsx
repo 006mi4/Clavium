@@ -1,3 +1,4 @@
+import { TransferSettingsRows } from './Transfers'
 import { useEffect, useState, type MouseEvent } from 'react'
 import { ClipboardPaste, Copy, FileKey2, History, KeyRound, Plus, ShieldCheck, Trash2, WandSparkles } from 'lucide-react'
 import type { AppInfo } from '@shared/ipc'
@@ -365,6 +366,10 @@ export function SettingsPage(props: { settings: UiSettings }) {
                 options={[11, 12, 13, 14, 15, 16, 18, 20, 24].map((n) => ({ value: n, label: `${n} pt` }))}
               />
             </Row>
+          </Group>
+
+          <Group title="Transfers" caption="Uploads and downloads of the file manager.">
+            <TransferSettingsRows settings={s} set={set} />
           </Group>
 
           <UpdateGroup auto={s.autoCheckUpdates} setAuto={(v) => set({ autoCheckUpdates: v })} />

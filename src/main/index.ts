@@ -133,7 +133,7 @@ function runApp(): void {
     readClipboardFiles,
     writeClipboardFiles,
     clearClipboard: () => clipboard.clear()
-  })
+  }, () => settings.get())
   const docker = new DockerManager(vault, prompter, send)
   const forwards = new ForwardManager(vault, prompter, () => send('fwd:changed'))
   const editor = new WindowEditorBridge(getWindow)

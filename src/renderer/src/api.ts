@@ -11,6 +11,7 @@ import type {
   DockerOverview,
   DockerRestartPolicy,
   DockerStats,
+  ExistingRule,
   CopyResult,
   HostInput,
   HostSummary,
@@ -19,6 +20,7 @@ import type {
   MovePair,
   MoveResult,
   PromptResponse,
+  QueueAction,
   RemoteEntry,
   ScreenList,
   TerminalTarget,
@@ -26,6 +28,7 @@ import type {
   TextFile,
   TextFileVersion,
   TextWriteResult,
+  TransferSnapshot,
   UpdateState,
   VaultState
 } from '@shared/types'
@@ -122,7 +125,6 @@ export const api = {
     remove: (id: string, path: string, recursive: boolean) => call<void>('files:remove', id, path, recursive),
     download: (id: string, entries: RemoteEntry[]) => call<boolean>('files:download', id, entries),
     pickLocal: (kind: 'files' | 'folder') => call<string[]>('files:pickLocal', kind),
-    uploadConflicts: (id: string, dir: string, paths: string[]) => call<string[]>('files:uploadConflicts', id, dir, paths),
     move: (id: string, pairs: MovePair[]) => call<MoveResult>('files:move', id, pairs),
     copy: (srcId: string, entries: RemoteEntry[], dstId: string, dir: string) => call<CopyResult>('files:copy', srcId, entries, dstId, dir),
     clipboardCopy: (id: string, entries: RemoteEntry[], forWindows: boolean) =>
@@ -131,8 +133,10 @@ export const api = {
     dragOut: (id: string, entries: RemoteEntry[]) => call<string | null>('files:dragOut', id, entries),
     dragCancel: () => call<void>('files:dragCancel'),
     chmod: (id: string, path: string, mode: number) => call<void>('files:chmod', id, path, mode),
-    cancelTransfer: (transferId: string) => call<void>('files:cancelTransfer', transferId),
-    cancelAll: () => call<void>('files:cancelAll'),
+    queue: () => call<TransferSnapshot>('files:queueGet'),
+    queueAction: (action: QueueAction, transferId?: string) => call<void>('files:queueAction', action, transferId ?? null),
+    queueAnswer: (transferId: string, rule: Exclude<ExistingRule, 'ask'>, all: boolean) => call<void>('files:queueAnswer', transferId, rule, all),
+    queueClear: () => call<void>('files:queueClear'),
     uploadPaths: (id: string, dir: string, paths: string[]) => call<boolean>('files:uploadPaths', id, dir, paths),
     close: (id: string) => call<void>('files:close', id)
   },

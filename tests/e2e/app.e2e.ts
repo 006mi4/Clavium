@@ -2,7 +2,7 @@
 // stdio bridge and locking. Run with `npm run test:e2e` (builds first).
 // It also regenerates the screenshots in docs/screenshots (light, plus a few dark ones).
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -405,11 +405,13 @@ describe('Clavium desktop app', () => {
 
       await writeClipboardFiles([join(local, 'readme.txt')])
       await page.keyboard.press('ControlOrMeta+v')
-      await page.getByText('Replace “readme.txt”?').waitFor()
-      await page.getByRole('button', { name: 'Cancel' }).click()
+      await page.getByText('“readme.txt” Already Exists').waitFor()
+      await page.getByRole('button', { name: 'Skip', exact: true }).click()
+      await page.getByRole('dialog').waitFor({ state: 'detached' })
       expect(readFileSync(join(srv.root, 'readme.txt'), 'utf8')).toBe('Hello from the test server\n')
       await page.keyboard.press('ControlOrMeta+v')
-      await page.getByRole('button', { name: 'Replace', exact: true }).click()
+      // "Replace" is the first choice
+      await page.getByRole('button', { name: 'Continue', exact: true }).click()
       await until(() => readFileSync(join(srv.root, 'readme.txt'), 'utf8') === 'new readme from the PC')
       writeFileSync(join(srv.root, 'readme.txt'), 'Hello from the test server\n')
       rmSync(join(srv.root, 'from-windows.txt'))
@@ -469,6 +471,94 @@ describe('Clavium desktop app', () => {
     await sheet.getByRole('button', { name: 'Apply' }).click()
     await page.getByText('Permissions of “readme.txt” changed.').waitFor()
     expect(srv.setstat.at(-1)).toEqual({ path: '/readme.txt', mode: 0o644 })
+  })
+
+  it('queues transfers: folders, existing files, pause and resume, speed and download', async () => {
+    const row = (name: string) => view().locator('.table tr', { hasText: name })
+    const panel = view().getByRole('region', { name: 'Transfers' })
+    const local = mkdtempSync(join(tmpdir(), 'clavium-e2e-queue-'))
+    mkdirSync(join(local, 'bundle', 'sub'), { recursive: true })
+    writeFileSync(join(local, 'bundle', 'a.txt'), 'file a')
+    writeFileSync(join(local, 'bundle', 'sub', 'b.txt'), 'file b')
+    writeFileSync(join(local, 'readme.txt'), 'readme from this computer')
+    const big = Buffer.alloc(700 * 1024, 5)
+    writeFileSync(join(local, 'big.bin'), big)
+    const pick = (paths: string[]): Promise<void> =>
+      app.evaluate(({ dialog }, filePaths) => {
+        dialog.showOpenDialog = (async () => ({ canceled: false, filePaths })) as typeof dialog.showOpenDialog
+      }, paths)
+    const uploadPicked = async (paths: string[]): Promise<void> => {
+      await pick(paths)
+      await view().getByRole('button', { name: 'Upload', exact: true }).click()
+      await page.getByRole('menuitem', { name: 'Upload Files…' }).click()
+    }
+    const onServer = (...p: string[]): string => join(srv.root, ...p)
+    const text = (path: string): string => (existsSync(path) ? readFileSync(path, 'utf8') : '')
+    const until = async (what: () => boolean): Promise<void> => {
+      for (let i = 0; i < 400 && !what(); i++) await page.waitForTimeout(50)
+      expect(what()).toBe(true)
+    }
+
+    // a folder and a file that already exists: the folder goes through, the file asks
+    await uploadPicked([join(local, 'bundle'), join(local, 'readme.txt')])
+    const sheet = page.getByRole('dialog')
+    await sheet.getByText('“readme.txt” Already Exists').waitFor()
+    await until(() => text(onServer('bundle', 'sub', 'b.txt')) === 'file b' && text(onServer('bundle', 'a.txt')) === 'file a')
+    await sheet.getByRole('row', { name: /Existing file/ }).waitFor()
+    // the choices can be reached with the keyboard: the first one has the focus
+    expect(await sheet.locator('input[type=radio]:focus').count()).toBe(1)
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('ArrowDown')
+    expect(await sheet.getByRole('radio', { name: /^Keep Both/ }).isChecked()).toBe(true)
+    await sheet.getByRole('button', { name: 'Continue', exact: true }).click()
+    await until(() => text(onServer('readme (1).txt')) === 'readme from this computer')
+    expect(text(onServer('readme.txt'))).toBe('Hello from the test server\n')
+    await panel.getByRole('heading', { name: 'Transfers Complete' }).waitFor()
+    await row('bundle').waitFor() // the list has reloaded by itself
+
+    // slow down, pause one transfer, and continue it where it stopped
+    await panel.getByRole('button', { name: 'Transfer Options' }).click()
+    await page.getByRole('dialog').getByLabel('Speed limit').selectOption({ label: '64 KB/s' })
+    await page.getByRole('dialog').getByRole('button', { name: 'Done' }).click()
+    await uploadPicked([join(local, 'big.bin')])
+    await panel.getByRole('progressbar', { name: 'All transfers' }).waitFor()
+    await panel.getByText(/KB\/s/).first().waitFor()
+    await panel.getByText(/left/).first().waitFor()
+    await panel.getByRole('button', { name: 'Pause big.bin' }).click()
+    await panel.getByText(/^Paused at /).waitFor()
+    const partial = statSync(onServer('big.bin')).size
+    expect(partial).toBeGreaterThan(0)
+    expect(partial).toBeLessThan(big.length)
+    await panel.getByRole('button', { name: 'Transfer Options' }).click()
+    await page.getByRole('dialog').getByLabel('Speed limit').selectOption({ label: 'No Limit' })
+    await page.getByRole('dialog').getByRole('button', { name: 'Done' }).click()
+    // the whole queue can be held and released as well
+    await panel.getByRole('button', { name: 'Pause All Transfers' }).click()
+    await panel.getByRole('button', { name: 'Resume big.bin' }).click()
+    await panel.getByRole('heading', { name: /^Paused, 1 Item Left/ }).waitFor()
+    await panel.getByRole('button', { name: 'Resume All Transfers' }).click()
+    await until(() => existsSync(onServer('big.bin')) && readFileSync(onServer('big.bin')).equals(big))
+    await panel.getByRole('heading', { name: 'Transfers Complete' }).waitFor()
+
+    // download the folder again; a file that is already there is skipped when told so
+    const down = join(local, 'down')
+    mkdirSync(join(down, 'bundle'), { recursive: true })
+    writeFileSync(join(down, 'bundle', 'a.txt'), 'mine')
+    await pick([down])
+    await row('bundle').click()
+    await view().getByRole('button', { name: 'Download', exact: true }).click()
+    await page.getByRole('dialog').getByText('“a.txt” Already Exists').waitFor()
+    await page.getByRole('dialog').getByRole('radio', { name: /^Skip/ }).check()
+    await page.getByRole('dialog').getByRole('button', { name: 'Continue', exact: true }).click()
+    await until(() => text(join(down, 'bundle', 'sub', 'b.txt')) === 'file b')
+    expect(text(join(down, 'bundle', 'a.txt'))).toBe('mine')
+    await panel.getByText('Skipped').waitFor()
+
+    await panel.getByRole('button', { name: 'Clear Finished' }).click()
+    await panel.waitFor({ state: 'detached' })
+    for (const name of ['bundle', 'big.bin', 'readme (1).txt']) rmSync(onServer(name), { recursive: true, force: true })
+    await view().getByRole('button', { name: 'Reload' }).click()
+    await row('bundle').waitFor({ state: 'detached' })
   })
 
   let token = ''

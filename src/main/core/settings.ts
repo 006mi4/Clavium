@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { z } from 'zod'
-import { DEFAULT_SETTINGS, type AppSettings } from '@shared/types'
+import { DEFAULT_SETTINGS, EXISTING_RULES, type AppSettings } from '@shared/types'
 
 export const settingsSchema = z.object({
   autoLockMinutes: z.number().int().min(0).max(24 * 60),
@@ -12,7 +12,11 @@ export const settingsSchema = z.object({
   mcpTokenHash: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   closeToTray: z.boolean(),
   terminalFontSize: z.number().int().min(8).max(32),
-  autoCheckUpdates: z.boolean()
+  autoCheckUpdates: z.boolean(),
+  transferConcurrency: z.number().int().min(1).max(10),
+  transferLimitKbps: z.number().int().min(0).max(10_000_000),
+  transferExisting: z.enum(EXISTING_RULES),
+  transferPreserve: z.boolean()
 })
 
 /** Non-secret preferences, stored as plain JSON next to the vault. */

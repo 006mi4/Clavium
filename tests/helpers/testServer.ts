@@ -179,8 +179,16 @@ export async function startTestSshServer(hostKey?: string): Promise<TestSshServe
           simple('REMOVE', (p) => fs.unlinkSync(real(p)))
           simple('RENAME', (a, b) => fs.renameSync(real(a), real(b)))
           sftp.on('SETSTAT', (reqid, path, attrs) => {
-            setstat.push({ path, mode: attrs.mode })
-            sftp.status(reqid, STATUS_CODE.OK)
+            try {
+              if (attrs.mode !== undefined) {
+                setstat.push({ path, mode: attrs.mode })
+                fs.chmodSync(real(path), attrs.mode & 0o777)
+              }
+              if (attrs.mtime !== undefined) fs.utimesSync(real(path), attrs.atime ?? attrs.mtime, attrs.mtime)
+              sftp.status(reqid, STATUS_CODE.OK)
+            } catch (e) {
+              fail(reqid, e)
+            }
           })
           sftp.on('FSETSTAT', (reqid) => sftp.status(reqid, STATUS_CODE.OK))
         })

@@ -83,6 +83,12 @@ export interface AppSettings {
   terminalFontSize: number
   /** Ask GitHub for a newer release on start and twice a day. */
   autoCheckUpdates: boolean
+  transferConcurrency: number
+  /** KiB per second, 0 for no limit */
+  transferLimitKbps: number
+  transferExisting: ExistingRule
+  /** Keep modification time and permissions of transferred files. */
+  transferPreserve: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -92,7 +98,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   mcpPort: 47821,
   closeToTray: true,
   terminalFontSize: 14,
-  autoCheckUpdates: true
+  autoCheckUpdates: true,
+  transferConcurrency: 3,
+  transferLimitKbps: 0,
+  transferExisting: 'ask',
+  transferPreserve: true
 }
 
 export type VaultState = 'uninitialized' | 'locked' | 'unlocked'
@@ -116,16 +126,76 @@ export interface AuditEntry {
   result: 'ok' | 'denied' | 'error'
 }
 
-export interface TransferProgress {
-  transferId: string
+/** What to do when the target of a transfer already exists. */
+export const EXISTING_RULES = ['ask', 'overwrite', 'skip', 'rename', 'newer', 'resume'] as const
+export type ExistingRule = (typeof EXISTING_RULES)[number]
+
+export type TransferState = 'queued' | 'running' | 'paused' | 'asking' | 'done' | 'failed' | 'cancelled' | 'skipped'
+
+export interface TransferItem {
+  id: string
   name: string
+  /** Where the file is or goes on the server. */
+  remotePath: string
   direction: 'upload' | 'download' | 'copy'
+  state: TransferState
   transferred: number
   total: number
-  done: boolean
+  /** bytes per second, 0 while not running */
+  speed: number
+  /** seconds left, when it can be told */
+  eta?: number
   error?: string
-  /** stopped by the user */
-  cancelled?: boolean
+}
+
+/** A question to the user: the target of a transfer exists already. */
+export interface TransferConflict {
+  id: string
+  name: string
+  direction: 'upload' | 'download'
+  /** Full path of the existing file, on the server or on this computer. */
+  target: string
+  source: { size: number; modifiedAt: number }
+  existing: { size: number; modifiedAt: number }
+  /** How many more transfers wait for the same kind of answer. */
+  waiting: number
+}
+
+export type TransferCounts = Record<TransferState, number>
+
+/** The transfer queue as the interface shows it. Long queues are shortened; `counts` is complete. */
+export interface TransferSnapshot {
+  items: TransferItem[]
+  counts: TransferCounts
+  /** Entries of the queue that are not in `items`. */
+  hidden: number
+  bytesDone: number
+  bytesTotal: number
+  speed: number
+  eta?: number
+  paused: boolean
+  /** Folders are still being read, so the totals will grow. */
+  scanning: boolean
+  conflict: TransferConflict | null
+}
+
+export type QueueAction = 'pause' | 'resume' | 'retry' | 'cancel' | 'top' | 'up' | 'down' | 'bottom'
+
+/** The part of the settings the transfer queue works with. */
+export interface TransferSettings {
+  transferConcurrency: number
+  /** KiB per second, 0 for no limit */
+  transferLimitKbps: number
+  transferExisting: ExistingRule
+  /** Keep modification time and permissions of transferred files. */
+  transferPreserve: boolean
+}
+
+export const DEFAULT_TRANSFER_SETTINGS: TransferSettings = {
+  transferConcurrency: 3,
+  transferLimitKbps: 0,
+  transferExisting: 'ask',
+  transferPreserve: true
 }
 
 /** A GNU screen session of the logged-in user on a server. */

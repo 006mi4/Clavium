@@ -108,8 +108,8 @@ export async function copyEntries(
     } else if (entry.type === 'file') {
       const tmp = join(tmpDir, randomId())
       try {
-        await src.download(entry.path, tmp, (t, total) => onProgress?.(top, t / 2, total))
-        await dst.upload(tmp, target, (t, total) => onProgress?.(top, total / 2 + t / 2, total))
+        await src.download(entry.path, tmp, { onProgress: (t, total) => onProgress?.(top, t / 2, total) })
+        await dst.upload(tmp, target, { onProgress: (t, total) => onProgress?.(top, total / 2 + t / 2, total) })
       } finally {
         await rm(tmp, { force: true })
       }

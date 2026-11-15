@@ -2,7 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdir
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { TransferProgress } from '@shared/types'
+import type { TransferSnapshot } from '@shared/types'
 import { watchForDrop } from '../src/main/core/dropwatch'
 import { openRemoteFs, type RemoteFs } from '../src/main/core/remotefs'
 import { conflictsIn, copyEntries, isInside, measure, moveEntries } from '../src/main/core/transfer'
@@ -123,7 +123,7 @@ describe('file manager', () => {
     const root = mkdtempSync(join(tmpdir(), 'clavium-fm-'))
     const temp = join(root, 'temp')
     mkdirSync(temp)
-    const progress: TransferProgress[] = []
+    const snapshots: TransferSnapshot[] = []
     let clipboard: string[] = []
     const desktop: Desktop = {
       tempRoot: temp,
@@ -132,12 +132,17 @@ describe('file manager', () => {
       clearClipboard: () => void (clipboard = []),
       dropRoots: () => [root]
     }
-    const fm = new FileManager(vault, recordingPrompter(), (channel, p) => channel === 'files:progress' && progress.push(p as TransferProgress), desktop)
+    const fm = new FileManager(vault, recordingPrompter(), (channel, p) => channel === 'files:queue' && snapshots.push(p as TransferSnapshot), desktop)
     const id = await fm.open(sshHost(srv.port))
+    /** Wait until nothing is being read or transferred any more. */
     const done = async (): Promise<void> => {
-      for (let i = 0; i < 100 && !progress.some((p) => p.done); i++) await new Promise((r) => setTimeout(r, 50))
+      for (let i = 0; i < 200; i++) {
+        const s = fm.transfers()
+        if (!s.scanning && s.counts.running + s.counts.queued === 0) return
+        await new Promise((r) => setTimeout(r, 25))
+      }
     }
-    return { fm, id, root, temp, progress, done, clipboard: () => clipboard, setClipboard: (p: string[]) => void (clipboard = p) }
+    return { fm, id, root, temp, snapshots, done, clipboard: () => clipboard, setClipboard: (p: string[]) => void (clipboard = p) }
   }
 
   it('downloads dragged items into the folder they were dropped in', async () => {
@@ -165,7 +170,7 @@ describe('file manager', () => {
     const site = await fs.stat('/site')
     const target = await t.fm.dragOut(t.id, [site], () => setTimeout(() => t.fm.cancelDrag(), 50))
     expect(target).toBeNull()
-    expect(t.progress).toEqual([])
+    expect(t.fm.transfers().items).toEqual([])
     expect(readdirSync(t.temp)).toEqual([])
     t.fm.closeAll()
   })
@@ -194,17 +199,17 @@ describe('file manager', () => {
     writeFileSync(big, Buffer.alloc(96 * 1024 * 1024, 7))
 
     // cancel as soon as the first bytes are on their way
-    const cancelWhenRunning = (direction: string): NodeJS.Timeout =>
+    const cancelWhenRunning = (): NodeJS.Timeout =>
       setInterval(() => {
-        const p = t.progress.find((x) => x.direction === direction && x.transferred > 0 && !x.done)
-        if (p) t.fm.cancelTransfer(p.transferId)
+        const item = t.fm.transfers().items.find((x) => x.state === 'running' && x.transferred > 0)
+        if (item) t.fm.queueAction('cancel', item.id)
       }, 5)
 
-    let timer = cancelWhenRunning('upload')
+    let timer = cancelWhenRunning()
     await t.fm.upload(t.id, [big], '/')
     clearInterval(timer)
-    expect(t.progress.at(-1)).toMatchObject({ direction: 'upload', done: true, cancelled: true })
-    expect(t.progress.at(-1)?.error).toBeUndefined()
+    expect(t.fm.transfers().items.at(-1)).toMatchObject({ direction: 'upload', state: 'cancelled' })
+    expect(t.fm.transfers().items.at(-1)?.error).toBeUndefined()
     expect(await names('/')).not.toContain('big.bin')
     await new Promise((r) => setTimeout(r, 300))
     rmSync(big) // the local file is not kept open
@@ -214,16 +219,14 @@ describe('file manager', () => {
     const entry = await fs.stat('/server-big.bin')
     const downloads = join(t.root, 'downloads')
     mkdirSync(downloads)
-    t.progress.length = 0
-    timer = cancelWhenRunning('download')
+    timer = cancelWhenRunning()
     await t.fm.download(t.id, [entry], { localDir: downloads })
     clearInterval(timer)
-    expect(t.progress.at(-1)).toMatchObject({ direction: 'download', done: true, cancelled: true })
+    expect(t.fm.transfers().items.at(-1)).toMatchObject({ direction: 'download', state: 'cancelled' })
     expect(readdirSync(downloads)).toEqual([])
 
-    t.progress.length = 0
     await t.fm.download(t.id, [await fs.stat('/site/index.html')], { localDir: downloads })
-    expect(t.progress.at(-1)).toMatchObject({ done: true, cancelled: false })
+    expect(t.fm.transfers().items.at(-1)).toMatchObject({ state: 'done' })
     expect(readFileSync(join(downloads, 'index.html'), 'utf8')).toBe('<h1>hi</h1>')
     await fs.remove('/server-big.bin', false)
     t.fm.closeAll()
@@ -249,8 +252,7 @@ describe('file manager', () => {
     await fs.mkdir('/inbox')
     expect(await t.fm.copy(t.id, [index], t.id, '/inbox')).toEqual({ created: ['/inbox/index.html'] })
     expect(await text('/inbox/index.html')).toBe('<h1>hi</h1>')
-    expect(t.progress.at(-1)).toMatchObject({ direction: 'copy', done: true, name: 'index.html' })
-    expect(await t.fm.uploadConflicts(t.id, '/inbox', [join(tmpdir(), 'x', 'index.html'), join(tmpdir(), 'x', 'other.txt')])).toEqual(['index.html'])
+    expect(t.fm.transfers().items.at(-1)).toMatchObject({ direction: 'copy', state: 'done', name: 'index.html' })
     t.fm.closeAll()
   })
 })
