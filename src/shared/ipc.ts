@@ -106,6 +106,8 @@ export const EVENT_CHANNELS = [
   'files:syncProgress',
   'files:watch',
   'files:closed',
+  'files:reconnecting',
+  'files:reconnected',
   'docker:closed',
   'docker:pullProgress',
   'prompt:request',

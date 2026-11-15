@@ -1,9 +1,11 @@
 import { existsSync } from 'node:fs'
+import type { Duplex } from 'node:stream'
 import { Client, type Algorithms, type ConnectConfig } from 'ssh2'
 import type { HostRecord } from '@shared/types'
 import { verifyPresentedKey } from './hostkeys'
 import { fingerprintOf, keyTypeOf } from './keys'
 import type { Prompter } from './prompter'
+import { openTunnel } from './proxy'
 import type { Vault } from './vault'
 
 /** Modern algorithms only. Legacy ones (SHA-1, ssh-rsa) must be enabled per host. */
@@ -93,8 +95,71 @@ export interface SshConnectContext {
 
 export class SshConnectError extends Error {}
 
-export function connectSsh(host: HostRecord, ctx: SshConnectContext): Promise<Client> {
-  if (host.protocol !== 'ssh') return Promise.reject(new SshConnectError('Host is not an SSH host'))
+/** How many jump hosts may stand in a row. */
+const MAX_JUMPS = 4
+
+/**
+ * The connection the SSH session runs over when the host is not reached directly: a channel
+ * through a jump host, or a tunnel through a proxy. `done` releases what was opened for it.
+ */
+async function route(host: HostRecord, ctx: SshConnectContext, chain: string[]): Promise<{ sock?: Duplex; done: () => void }> {
+  const timeout = ctx.readyTimeoutMs ?? 20000
+  if (host.jumpHostId) {
+    const jump = ctx.vault.data.hosts.find((h) => h.id === host.jumpHostId)
+    if (!jump) throw new SshConnectError('The jump host of this host no longer exists')
+    if (jump.protocol !== 'ssh') throw new SshConnectError('The jump host is not an SSH host')
+    if (chain.includes(jump.id) || jump.id === host.id) throw new SshConnectError('The jump hosts point at each other in a circle')
+    if (chain.length >= MAX_JUMPS) throw new SshConnectError('Too many jump hosts in a row')
+    let via: Client
+    try {
+      via = await connectSsh(jump, ctx, [...chain, host.id])
+    } catch (e) {
+      throw new SshConnectError(`Jump host ${jump.name}: ${(e as Error).message}`)
+    }
+    try {
+      const sock = await new Promise<Duplex>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('timed out')), timeout)
+        via.forwardOut('127.0.0.1', 0, host.hostname, host.port, (err, stream) => {
+          clearTimeout(timer)
+          if (err) reject(err)
+          else resolve(stream)
+        })
+      })
+      return { sock, done: () => via.end() }
+    } catch (e) {
+      via.end()
+      throw new SshConnectError(`Jump host ${jump.name} could not reach ${host.hostname}:${host.port} (${(e as Error).message})`)
+    }
+  }
+  if (host.proxy) {
+    try {
+      const sock = await openTunnel({ ...host.proxy, password: host.proxyPassword }, host.hostname, host.port, timeout)
+      return { sock, done: () => sock.destroy() }
+    } catch (e) {
+      throw new SshConnectError((e as Error).message)
+    }
+  }
+  return { done: () => undefined }
+}
+
+/**
+ * Connect and log in. A host with a jump host is reached through an SSH session to that host,
+ * a host with a proxy through the proxy; the host key is checked the same in every case.
+ */
+export async function connectSsh(host: HostRecord, ctx: SshConnectContext, chain: string[] = []): Promise<Client> {
+  if (host.protocol !== 'ssh') throw new SshConnectError('Host is not an SSH host')
+  const via = await route(host, ctx, chain)
+  try {
+    const client = await connectOver(host, ctx, via.sock)
+    client.once('close', via.done)
+    return client
+  } catch (e) {
+    via.done()
+    throw e
+  }
+}
+
+function connectOver(host: HostRecord, ctx: SshConnectContext, sock: Duplex | undefined): Promise<Client> {
   const client = new Client()
   const hostKeyId = `ssh:${host.hostname}:${host.port}`
   let hostKeyRejected = false
@@ -102,6 +167,7 @@ export function connectSsh(host: HostRecord, ctx: SshConnectContext): Promise<Cl
   const config: ConnectConfig = {
     host: host.hostname,
     port: host.port,
+    ...(sock ? { sock } : {}),
     username: host.username,
     readyTimeout: ctx.readyTimeoutMs ?? 20000,
     keepaliveInterval: 15000,

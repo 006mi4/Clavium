@@ -192,6 +192,6 @@ export const api = {
 }
 
 export function hostToInput(h: HostSummary): HostInput {
-  const { hasPassword: _p, createdAt: _c, updatedAt: _u, ...rest } = h
-  return { ...rest, password: undefined }
+  const { hasPassword: _p, hasProxyPassword: _pp, createdAt: _c, updatedAt: _u, bookmarks: _b, lastPath: _l, ...rest } = h
+  return { ...rest, password: undefined, proxyPassword: undefined }
 }

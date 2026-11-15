@@ -30,7 +30,7 @@ import {
   Upload,
   X
 } from 'lucide-react'
-import type { HostSummary, MovePair, RemoteEntry, WatchStatus } from '@shared/types'
+import type { HostSummary, MovePair, ReconnectStatus, RemoteEntry, WatchStatus } from '@shared/types'
 import { api, on } from '../api'
 import { TransferPanel } from './Transfers'
 import { SyncSheet, WatchBar } from './SyncSheet'
@@ -102,6 +102,7 @@ export function FilesView(props: {
   const [propsFor, setPropsFor] = useState<RemoteEntry[] | null>(null)
   const [searching, setSearching] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  const [reconnect, setReconnect] = useState<ReconnectStatus | null>(null)
   const [allWatches, setWatches] = useState<WatchStatus[]>([])
   const watches = useMemo(() => allWatches.filter((w) => w.sessionId === sid), [allWatches, sid])
   useEffect(() => {
@@ -283,12 +284,24 @@ export function FilesView(props: {
       if (id === sidRef.current) {
         sidRef.current = null
         setSid(null)
+        setReconnect(null)
         report('closed', 'The connection was closed.')
       }
+    })
+    // the connection broke off: the main process opens it again, and transfers go on afterwards
+    const offLost = on('files:reconnecting', (r: ReconnectStatus) => {
+      if (r.id === sidRef.current) setReconnect(r)
+    })
+    const offBack = on('files:reconnected', (id: string) => {
+      if (id !== sidRef.current) return
+      setReconnect(null)
+      void load(cwdRef.current)
     })
     return () => {
       offProg()
       offClosed()
+      offLost()
+      offBack()
     }
   }, [])
 
@@ -855,6 +868,29 @@ export function FilesView(props: {
               </div>
             </div>
 
+            {reconnect && (
+              <div className="reconnect-bar" role="status" aria-live="polite">
+                <div className="spinner small" aria-hidden="true" />
+                <span className="what">
+                  The connection was lost. Reconnecting, attempt {reconnect.attempt} of {reconnect.attempts}. Transfers continue afterwards.
+                  {reconnect.attempt > 1 && reconnect.error ? ` (${reconnect.error})` : ''}
+                </span>
+                <button
+                  className="btn small"
+                  onClick={() => {
+                    const id = sidRef.current
+                    if (!id) return
+                    sidRef.current = null
+                    setSid(null)
+                    setReconnect(null)
+                    void api.files.close(id)
+                    report('closed', 'The connection was lost.')
+                  }}
+                >
+                  Give Up
+                </button>
+              </div>
+            )}
             <WatchBar watches={watches} />
             <div className="file-split">
             {showTree && sid && (

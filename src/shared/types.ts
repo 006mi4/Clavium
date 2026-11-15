@@ -36,6 +36,12 @@ export interface HostRecord {
   forwards: PortForward[]
   /** How an FTP server spells file names. Missing means UTF-8. */
   ftpEncoding?: FtpEncoding
+  /** Reach the server through this other SSH host of the vault (SSH only). */
+  jumpHostId?: string
+  /** Reach the server through a proxy. Not used together with a jump host. */
+  proxy?: ProxyConfig
+  /** secret */
+  proxyPassword?: string
   /** Folders the user marked in the file manager. */
   bookmarks?: string[]
   /** The folder the file manager showed last. */
@@ -44,16 +50,25 @@ export interface HostRecord {
   updatedAt: number
 }
 
+export const PROXY_TYPES = ['socks5', 'http'] as const
+export interface ProxyConfig {
+  type: (typeof PROXY_TYPES)[number]
+  host: string
+  port: number
+  username?: string
+}
+
 export const FTP_ENCODINGS = ['utf8', 'latin1'] as const
 export type FtpEncoding = (typeof FTP_ENCODINGS)[number]
 
 /** Host as seen by the renderer: no secrets, only a flag. */
-export type HostSummary = Omit<HostRecord, 'password'> & { hasPassword: boolean }
+export type HostSummary = Omit<HostRecord, 'password' | 'proxyPassword'> & { hasPassword: boolean; hasProxyPassword: boolean }
 
 /** Input from the host editor. `password: undefined` keeps the stored one, `null` clears it. */
-export type HostInput = Omit<HostRecord, 'id' | 'createdAt' | 'updatedAt' | 'password' | 'bookmarks' | 'lastPath'> & {
+export type HostInput = Omit<HostRecord, 'id' | 'createdAt' | 'updatedAt' | 'password' | 'proxyPassword' | 'bookmarks' | 'lastPath'> & {
   id?: string
   password?: string | null
+  proxyPassword?: string | null
 }
 
 export interface SshKeyRecord {
@@ -567,4 +582,13 @@ export interface WatchStatus {
   lastName?: string
   lastError?: string
   startedAt: number
+}
+
+/** A file session lost its connection and is opening it again. */
+export interface ReconnectStatus {
+  id: string
+  attempt: number
+  attempts: number
+  /** Why the connection is gone, or why the last attempt failed. */
+  error: string
 }

@@ -3,12 +3,13 @@ import { open as openLocal, stat as statLocal } from 'node:fs/promises'
 import { posix } from 'node:path'
 import { PassThrough, Readable, Transform, Writable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
-import type { TLSSocket, ConnectionOptions as TLSConnectionOptions } from 'node:tls'
-import { Client as FtpClient, FileType } from 'basic-ftp'
+import { connect as tlsConnect, TLSSocket, type ConnectionOptions as TLSConnectionOptions } from 'node:tls'
+import { Client as FtpClient, FileType, type FTPContext, type FTPResponse } from 'basic-ftp'
 import type { Client as SshClient, SFTPWrapper, Stats, FileEntryWithStats } from 'ssh2'
 import type { HostRecord, RemoteEntry } from '@shared/types'
 import { verifyPresentedKey } from './hostkeys'
 import type { Prompter } from './prompter'
+import { openTunnel, type ProxyAccess } from './proxy'
 import { connectSsh } from './ssh'
 import type { Vault } from './vault'
 
@@ -477,10 +478,47 @@ const TLS_TRUST_ERRORS = new Set([
 
 class Mutex {
   private chain: Promise<unknown> = Promise.resolve()
+  /** Something is running or waiting. */
+  busy = 0
   run<T>(fn: () => Promise<T>): Promise<T> {
-    const next = this.chain.then(fn, fn)
+    this.busy++
+    const next = this.chain.then(fn, fn).finally(() => this.busy--)
     this.chain = next.catch(() => undefined)
     return next
+  }
+}
+
+/**
+ * Open FTP data connections through a proxy. The server is asked for a port in passive mode and
+ * the proxy connects to that port on the host of the control connection; the address the server
+ * names is not used, because it is often one that only the server itself can reach.
+ */
+function passiveThroughProxy(proxy: ProxyAccess, host: string): (ftp: FTPContext) => Promise<FTPResponse> {
+  return async (ftp) => {
+    let res: FTPResponse
+    let port: number
+    try {
+      res = await ftp.request('EPSV')
+      const m = /\((.)\1\1(\d+)\1\)/.exec(res.message)
+      if (!m) throw new Error('unreadable')
+      port = Number(m[2])
+    } catch (e) {
+      if (ftp.closed) throw e
+      res = await ftp.request('PASV')
+      const m = /(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)/.exec(res.message)
+      if (!m) throw new Error(`Can't read the answer to PASV: ${res.message}`)
+      port = (Number(m[5]) & 255) * 256 + (Number(m[6]) & 255)
+    }
+    const raw = await openTunnel(proxy, host, port, ftp.timeout || 30000)
+    if (ftp.socket instanceof TLSSocket) {
+      // The server expects the session of the control connection, as without a proxy.
+      const secure = tlsConnect({ ...ftp.tlsOptions, socket: raw, session: ftp.tlsSessionStore ?? ftp.socket.getSession() })
+      secure.on('session', (session) => (ftp.tlsSessionStore = session))
+      ftp.dataSocket = secure
+    } else {
+      ftp.dataSocket = raw
+    }
+    return res
   }
 }
 
@@ -495,12 +533,23 @@ export class FtpFs implements RemoteFs {
   private readonly lock = new Mutex()
   private closeHandlers: (() => void)[] = []
   private closed = false
+  /** Servers drop a connection that says nothing for a while; a NOOP now and then keeps it. */
+  static keepaliveMs = 30_000
+  private readonly keepalive: NodeJS.Timeout
 
   private constructor(
     private readonly client: FtpClient,
     private readonly reconnect: () => Promise<FtpFs>
   ) {
     client.ftp.socket.on('close', () => this.markClosed())
+    // A server that hangs up on an idle connection: without this it would only show at the next command.
+    client.ftp.socket.on('end', () => this.close())
+    this.keepalive = setInterval(() => {
+      // Never in the middle of something: a transfer keeps the connection alive by itself.
+      if (this.closed || this.lock.busy) return
+      this.run(() => this.client.send('NOOP')).catch(() => undefined)
+    }, FtpFs.keepaliveMs)
+    this.keepalive.unref()
   }
 
   /** FTP can do one thing per connection, so a transfer gets a connection of its own. */
@@ -522,6 +571,7 @@ export class FtpFs implements RemoteFs {
   private markClosed(): void {
     if (this.closed) return
     this.closed = true
+    clearInterval(this.keepalive)
     for (const fn of this.closeHandlers) fn()
   }
 
@@ -548,6 +598,7 @@ export class FtpFs implements RemoteFs {
     const keyId = `ftps:${host.hostname}:${host.port}`
     const pinned = host.protocol === 'ftp' ? undefined : ctx.vault.data.knownHosts.find((k) => k.id === keyId)
 
+    const proxy: ProxyAccess | null = host.proxy ? { ...host.proxy, password: host.proxyPassword } : null
     const attempt = async (pinMode: boolean): Promise<FtpClient> => {
       const client = new FtpClient(30000)
       const tls: TLSConnectionOptions = {
@@ -556,7 +607,19 @@ export class FtpFs implements RemoteFs {
         minVersion: 'TLSv1.2'
       }
       try {
-        if (host.protocol === 'ftps-implicit') {
+        if (proxy) {
+          const tunnel = await openTunnel(proxy, host.hostname, host.port, 30000)
+          if (host.protocol === 'ftps-implicit') {
+            client.ftp.socket = tlsConnect({ ...tls, socket: tunnel })
+            client.ftp.tlsOptions = tls
+          } else {
+            client.ftp.socket = tunnel
+          }
+          // What `connect` of the library does after opening the socket: wait for the greeting.
+          await (client as unknown as { _handleConnectResponse(): Promise<unknown> })._handleConnectResponse()
+          if (host.protocol === 'ftps') await client.useTLS(tls)
+          client.prepareTransfer = passiveThroughProxy(proxy, host.hostname)
+        } else if (host.protocol === 'ftps-implicit') {
           await client.connectImplicitTLS(host.hostname, host.port, tls)
         } else {
           await client.connect(host.hostname, host.port)

@@ -387,7 +387,7 @@ export class TransferQueue {
   private pump(): void {
     const limit = this.paused ? 0 : this.host.settings().transferConcurrency
     while (this.running < limit) {
-      const next = this.entries.find((e) => e.state === 'queued')
+      const next = this.entries.find((e) => e.state === 'queued' && !(e.batch && this.suspended.has(e.batch.sessionId)))
       if (!next) break
       next.state = 'running'
       this.running++
@@ -504,7 +504,8 @@ export class TransferQueue {
         this.finish(entry, 'cancelled')
       } else if (why === 'pause') {
         this.finish(entry, 'paused')
-      } else if (why === 'requeue') {
+      } else if (why === 'requeue' || this.suspended.has(batch.sessionId)) {
+        // Also a transfer that broke off with the connection: it goes on once the session is back.
         this.finish(entry, 'queued')
       } else if (this.transient(e, broken) && entry.attempts < AUTO_RETRIES && this.host.alive(batch.sessionId)) {
         entry.attempts++
@@ -750,7 +751,36 @@ export class TransferQueue {
   }
 
   /** The session is gone: nothing of it can run any more. */
+  /** Sessions whose connection was lost and is being opened again. Their transfers wait. */
+  private suspended = new Set<string>()
+
+  private dropConnections(sessionId: string): void {
+    for (const fs of [...(this.forks.get(sessionId) ?? [])]) fs.close()
+    this.forks.delete(sessionId)
+    this.pool.delete(sessionId)
+  }
+
+  /** The connection of a session was lost. Its transfers stop where they are and wait for `resume`. */
+  suspend(sessionId: string): void {
+    this.suspended.add(sessionId)
+    for (const e of this.entries) if (e.batch?.sessionId === sessionId && e.state === 'running') e.stop?.('requeue')
+    this.dropConnections(sessionId)
+    this.touch()
+  }
+
+  /** The session is connected again, as `fs`: its transfers continue where they stopped. */
+  resume(sessionId: string, fs: RemoteFs): void {
+    this.suspended.delete(sessionId)
+    for (const e of this.entries) {
+      if (e.batch?.sessionId !== sessionId) continue
+      e.batch.fs = fs
+      e.batch.listings.clear()
+    }
+    this.pump()
+  }
+
   sessionClosed(sessionId: string): void {
+    this.suspended.delete(sessionId)
     for (const e of this.entries) {
       if (e.batch?.sessionId !== sessionId) continue
       e.batch.cancelled = true
@@ -760,9 +790,7 @@ export class TransferQueue {
         this.finish(e, 'failed', 'The connection was closed')
       }
     }
-    for (const fs of [...(this.forks.get(sessionId) ?? [])]) fs.close()
-    this.forks.delete(sessionId)
-    this.pool.delete(sessionId)
+    this.dropConnections(sessionId)
     this.touch()
   }
 

@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { app, clipboard, dialog, ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { z } from 'zod'
 import type { AppInfo, InvokeChannel } from '@shared/ipc'
-import { FTP_ENCODINGS, type HostRecord, type HostSummary, type PromptResponse, type RemoteEntry } from '@shared/types'
+import { FTP_ENCODINGS, PROXY_TYPES, type HostRecord, type HostSummary, type PromptResponse, type RemoteEntry } from '@shared/types'
 import type { AuditLog } from './core/audit'
 import { randomId } from './core/crypto'
 import { buildKeyRecord, generateKey, summarizeKey } from './core/keys'
@@ -71,7 +71,18 @@ const hostInputSchema = z.object({
   aiConfirm: z.enum(['all', 'changes', 'none']),
   notes: z.string().max(10_000),
   forwards: z.array(forwardSchema).max(50),
-  ftpEncoding: z.enum(FTP_ENCODINGS).optional()
+  ftpEncoding: z.enum(FTP_ENCODINGS).optional(),
+  jumpHostId: id.optional(),
+  proxy: z
+    .object({
+      type: z.enum(PROXY_TYPES),
+      host: z.string().trim().min(1).max(255).regex(/^[^\s/@\\]+$/, 'Invalid proxy host name'),
+      port: z.number().int().min(1).max(65535),
+      username: z.string().max(255).optional()
+    })
+    .strict()
+    .optional(),
+  proxyPassword: z.string().max(255).nullable().optional()
 })
 
 const entrySchema = z.object({
@@ -97,8 +108,8 @@ const promptResponseSchema = z.discriminatedUnion('kind', [
 // ------------------------------------------------------------- helpers ----
 
 export function summarizeHost(h: HostRecord): HostSummary {
-  const { password, ...rest } = h
-  return { ...rest, hasPassword: !!password }
+  const { password, proxyPassword, ...rest } = h
+  return { ...rest, hasPassword: !!password, hasProxyPassword: !!proxyPassword }
 }
 
 export function registerIpc(ctx: IpcContext): void {
@@ -167,11 +178,19 @@ export function registerIpc(ctx: IpcContext): void {
       if (input.authMethod === 'key' && input.keyId && !d.keys.some((k) => k.id === input.keyId)) {
         throw new Error('Selected key does not exist')
       }
-      const { password, id: _ignored, ...fields } = input
+      const { password, proxyPassword, id: _ignored, ...fields } = input
+      if (fields.jumpHostId) {
+        const jump = d.hosts.find((h) => h.id === fields.jumpHostId)
+        if (!jump || jump.protocol !== 'ssh') throw new Error('The jump host must be an SSH host of this vault')
+        if (fields.protocol !== 'ssh') throw new Error('Only SSH hosts can be reached through a jump host')
+        if (jump.id === existing?.id) throw new Error('A host cannot be its own jump host')
+        fields.proxy = undefined
+      }
       const record: HostRecord = {
         ...fields,
         id: existing?.id ?? randomId(),
         password: password === undefined ? existing?.password : password === null ? undefined : password,
+        proxyPassword: !fields.proxy ? undefined : proxyPassword === undefined ? existing?.proxyPassword : proxyPassword === null ? undefined : proxyPassword,
         bookmarks: existing?.bookmarks,
         lastPath: existing?.lastPath,
         createdAt: existing?.createdAt ?? now,
@@ -195,7 +214,8 @@ export function registerIpc(ctx: IpcContext): void {
   })
   handle('hosts:delete', z.tuple([id]), (hostId) =>
     ctx.vault.update((d) => {
-      d.hosts = d.hosts.filter((h) => h.id !== hostId)
+      // Hosts that went through the deleted one connect directly again, and say so by failing or not.
+      d.hosts = d.hosts.filter((h) => h.id !== hostId).map((h) => (h.jumpHostId === hostId ? { ...h, jumpHostId: undefined } : h))
     })
   )
   handle('hosts:duplicate', z.tuple([id]), (hostId) =>

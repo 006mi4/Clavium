@@ -15,7 +15,7 @@ import type { Prompter } from './core/prompter'
 import { openRemoteFs, type RemoteFs } from './core/remotefs'
 import type { Vault } from './core/vault'
 
-type Send = (channel: 'files:queue' | 'files:changed' | 'files:closed' | 'files:searchHits' | 'files:syncProgress' | 'files:watch', ...args: unknown[]) => void
+type Send = (channel: 'files:queue' | 'files:changed' | 'files:closed' | 'files:searchHits' | 'files:syncProgress' | 'files:watch' | 'files:reconnecting' | 'files:reconnected', ...args: unknown[]) => void
 
 export { safeLocalName }
 
@@ -61,6 +61,9 @@ const NO_DESKTOP: Desktop = {
   clearClipboard: () => undefined
 }
 
+const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 15_000, 30_000, 30_000, 30_000]
+const NOT_WORTH_RETRYING = /Authentication failed|not accepted|cancelled|No password stored|no longer exists|user name or password|asks for a user name/i
+
 /** Larger selections are not copied to this computer just because someone pressed Ctrl+C. */
 const CLIPBOARD_LIMIT = { bytes: 200 * 1024 * 1024, files: 2000 }
 /** How long to wait after a drag ended for the dropped marker to show up. */
@@ -79,7 +82,9 @@ export class FileManager {
     private readonly prompter: Prompter,
     private readonly send: Send,
     private readonly desktop: Desktop = NO_DESKTOP,
-    settings: () => TransferSettings = () => DEFAULT_TRANSFER_SETTINGS
+    settings: () => TransferSettings = () => DEFAULT_TRANSFER_SETTINGS,
+    /** Pauses before each attempt to connect again after the connection was lost. Empty: never. */
+    private readonly reconnectDelays: number[] = RECONNECT_DELAYS_MS
   ) {
     this.queue = new TransferQueue({
       settings,
@@ -98,28 +103,84 @@ export class FileManager {
     }
   }
 
+  /** The host of every open session, to connect again when the connection is lost. */
+  private hosts = new Map<string, HostRecord>()
+  private reconnecting = new Map<string, { cancelled: boolean }>()
+
   async open(host: HostRecord): Promise<string> {
     const fs = await openRemoteFs(host, { vault: this.vault, prompter: this.prompter, interactive: true })
     const id = randomId()
+    this.hosts.set(id, host)
+    this.attach(id, fs)
+    return id
+  }
+
+  private attach(id: string, fs: RemoteFs): void {
     this.sessions.set(id, fs)
     fs.onClose(() => {
-      if (!this.sessions.delete(id)) return
-      this.sessionGone(id)
-      this.queue.sessionClosed(id)
-      this.send('files:closed', id)
+      // Closed on purpose, or already replaced by a new connection.
+      if (this.sessions.get(id) === fs) void this.lost(id)
     })
-    return id
+  }
+
+  /** The session is over for good: tell everyone who built on it. */
+  private dropped(id: string): void {
+    this.sessions.delete(id)
+    this.hosts.delete(id)
+    this.reconnecting.delete(id)
+    this.sessionGone(id)
+    this.queue.sessionClosed(id)
+    this.quietly(() => this.send('files:closed', id))
+  }
+
+  /**
+   * The connection broke off. Open it again, a few times with growing pauses; transfers, watched
+   * folders and comparisons of the session stay and go on afterwards.
+   */
+  private async lost(id: string): Promise<void> {
+    const host = this.hosts.get(id)
+    const delays = this.reconnectDelays
+    if (!host || !delays.length) return this.dropped(id)
+    const state = { cancelled: false }
+    this.reconnecting.set(id, state)
+    this.queue.suspend(id)
+    let error = 'The connection was lost'
+    for (let attempt = 1; attempt <= delays.length; attempt++) {
+      this.quietly(() => this.send('files:reconnecting', { id, attempt, attempts: delays.length, error }))
+      await new Promise((r) => setTimeout(r, delays[attempt - 1]))
+      if (state.cancelled) return
+      try {
+        const fs = await openRemoteFs(host, { vault: this.vault, prompter: this.prompter, interactive: true })
+        if (state.cancelled) return fs.close()
+        this.reconnecting.delete(id)
+        this.attach(id, fs)
+        this.queue.resume(id, fs)
+        this.quietly(() => this.send('files:reconnected', id))
+        return
+      } catch (e) {
+        if (state.cancelled) return
+        error = (e as Error).message
+        // Waiting does not help when the server says no.
+        if (NOT_WORTH_RETRYING.test(error)) break
+      }
+    }
+    this.dropped(id)
   }
 
   get(id: string): RemoteFs {
     const fs = this.sessions.get(id)
     if (!fs) throw new Error('File session is closed — reconnect')
+    if (this.reconnecting.has(id)) throw new Error('The connection was lost. Clavium is reconnecting')
     return fs
   }
 
   close(id: string): void {
     const fs = this.sessions.get(id)
+    const pending = this.reconnecting.get(id)
+    if (pending) pending.cancelled = true
+    this.reconnecting.delete(id)
     this.sessions.delete(id)
+    this.hosts.delete(id)
     this.sessionGone(id)
     this.queue.sessionClosed(id)
     fs?.close()
@@ -280,9 +341,10 @@ export class FileManager {
       local,
       remoteDir,
       {
-        fs,
-        transfer: (items) => this.queue.pairs(id, fs, items, { preserve: true }),
-        uploadFolder: (path, parent) => this.queue.upload(id, fs, [path], parent, 'overwrite'),
+        fs: () => this.get(id),
+        online: () => this.sessions.has(id) && !this.reconnecting.has(id),
+        transfer: (items) => this.queue.pairs(id, this.get(id), items, { preserve: true }),
+        uploadFolder: (path, parent) => this.queue.upload(id, this.get(id), [path], parent, 'overwrite'),
         changed: () => this.watchesChanged()
       },
       () => {

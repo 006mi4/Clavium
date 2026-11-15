@@ -3,7 +3,7 @@ import * as fs from 'node:fs'
 import { posix, join } from 'node:path'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import type { AddressInfo } from 'node:net'
+import net, { type AddressInfo } from 'node:net'
 import { Server, utils, type Connection } from 'ssh2'
 
 const { STATUS_CODE, flagsToString } = utils.sftp
@@ -15,6 +15,12 @@ export interface TestSshServer {
   /** permission changes the server was asked to make */
   setstat: { path: string; mode: number | undefined }[]
   chown: { path: string; uid: number; gid: number }[]
+  /** connections other clients asked this server to open for them (jump host) */
+  tunnels: { host: string; port: number }[]
+  /** how many clients have logged in so far */
+  logins: number
+  /** cut every open connection, as a network failure would; the server keeps running */
+  dropClients(): void
   close(): Promise<void>
 }
 
@@ -37,6 +43,9 @@ export async function startTestSshServer(hostKey?: string): Promise<TestSshServe
   const key = hostKey ?? utils.generateKeyPairSync('ed25519').private
   const setstat: TestSshServer['setstat'] = []
   const chown: TestSshServer['chown'] = []
+  const tunnels: TestSshServer['tunnels'] = []
+  const clients = new Set<Connection>()
+  const state = { logins: 0 }
   const real = (vpath: string): string => {
     const norm = posix.normalize(posix.isAbsolute(vpath) ? vpath : posix.join('/', vpath))
     if (norm.includes('..')) throw new Error('escape')
@@ -48,7 +57,22 @@ export async function startTestSshServer(hostKey?: string): Promise<TestSshServe
       if (ctx.method === 'password' && ctx.username === TEST_USER && ctx.password === TEST_PASSWORD) return ctx.accept()
       ctx.reject(['password'])
     })
+    clients.add(client)
+    client.on('close', () => clients.delete(client))
     client.on('ready', () => {
+      state.logins++
+      client.on('tcpip', (accept, reject, info) => {
+        tunnels.push({ host: info.destIP, port: info.destPort })
+        const out = net.connect(info.destPort, info.destIP)
+        out.once('error', () => reject())
+        out.once('connect', () => {
+          const channel = accept()
+          channel.pipe(out).pipe(channel)
+          channel.on('close', () => out.destroy())
+          out.on('close', () => channel.close())
+          out.on('error', () => channel.close())
+        })
+      })
       client.on('session', (acceptSession) => {
         const session = acceptSession()
         session.on('pty', (accept) => accept?.())
@@ -209,6 +233,13 @@ export async function startTestSshServer(hostKey?: string): Promise<TestSshServe
     hostKey: key,
     setstat,
     chown,
+    tunnels,
+    get logins() {
+      return state.logins
+    },
+    dropClients: () => {
+      for (const c of [...clients]) (c as unknown as { _sock: net.Socket })._sock.destroy()
+    },
     close: () =>
       new Promise<void>((resolve) => {
         server.close(() => resolve())

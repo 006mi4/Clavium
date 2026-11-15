@@ -179,6 +179,7 @@ export function HostsPage(props: {
           host={editing === 'new' ? undefined : editing}
           keys={props.keys}
           groups={groups}
+          hosts={props.hosts}
           onClose={() => setEditing(null)}
           onSaved={(saved) => {
             setEditing(null)

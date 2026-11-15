@@ -10,10 +10,14 @@ import { ignoredName } from './sync'
 const SETTLE_MS = 400
 /** Right after the start the system may still report changes from before it (macOS does). */
 const WARMUP_MS = 2000
+/** How often a watch looks whether a lost connection is back. */
+const OFFLINE_RETRY_MS = 1500
 
 export interface KeepUpHost {
-  /** The session of the user. */
-  fs: RemoteFs
+  /** The session of the user, as it is connected right now. */
+  fs(): RemoteFs
+  /** False while the connection is lost and being opened again. Changes wait until it is back. */
+  online(): boolean
   /** Upload exactly these files through the queue. */
   transfer(items: PairSpec[]): Promise<PairOutcome[]>
   /** Upload a whole new folder into a folder on the server. */
@@ -86,9 +90,9 @@ export class FolderWatch {
       if (this.knownDirs.has(dir)) continue
       const path = posix.join(this.status.remoteDir, dir)
       try {
-        await this.host.fs.mkdir(path)
+        await this.host.fs().mkdir(path)
       } catch (e) {
-        const there = await this.host.fs.stat(path).catch(() => null)
+        const there = await this.host.fs().stat(path).catch(() => null)
         if (there?.type !== 'dir') throw e
       }
       this.knownDirs.add(dir)
@@ -98,6 +102,10 @@ export class FolderWatch {
   private async flush(): Promise<void> {
     this.timer = null
     if (this.busy) return this.schedule()
+    if (!this.host.online() && !this.stopped) {
+      this.timer = setTimeout(() => void this.flush(), OFFLINE_RETRY_MS)
+      return
+    }
     const rels = [...this.pending].sort((a, b) => a.split('/').length - b.split('/').length)
     this.pending.clear()
     if (!rels.length || this.stopped) return
@@ -126,7 +134,7 @@ export class FolderWatch {
         try {
           if (st.isDirectory()) {
             if (this.knownDirs.has(rel)) continue
-            const there = await this.host.fs.stat(remote).catch(() => null)
+            const there = await this.host.fs().stat(remote).catch(() => null)
             if (there?.type !== 'dir') {
               await this.ensureRemoteDir(parent)
               wholeDirs.push(rel)
@@ -137,7 +145,7 @@ export class FolderWatch {
             this.knownDirs.add(rel)
           } else if (st.isFile()) {
             await this.ensureRemoteDir(parent)
-            const there = await this.host.fs.stat(remote).catch(() => null)
+            const there = await this.host.fs().stat(remote).catch(() => null)
             // Already the same there (for instance a file that was just downloaded into this folder).
             if (there?.type === 'file' && there.size === st.size && there.modifiedAt && !there.timePrecision && Math.abs(there.modifiedAt - st.mtimeMs) <= 2000) continue
             specs.push({ direction: 'upload', local, remote, size: st.size, modifiedAt: st.mtimeMs, mode: process.platform === 'win32' ? undefined : st.mode & 0o777 })

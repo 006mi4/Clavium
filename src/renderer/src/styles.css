@@ -587,6 +587,9 @@ select.field option { background: var(--bg-elevated); color: var(--text); }
 .note p { margin: 0; }
 .note p + p, .note p + details { margin-top: 4px; }
 .note .mono { font-family: var(--mono); overflow-wrap: anywhere; }
+.reconnect-bar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; font-size: 12px; border-bottom: 1px solid var(--line); background: var(--orange-fill); }
+.reconnect-bar .what { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.spinner.small { width: 14px; height: 14px; border-width: 2px; flex-shrink: 0; }
 .watch-bar { border-bottom: 1px solid var(--line); background: var(--fill); }
 .watch-bar .watch { display: flex; align-items: center; gap: 8px; padding: 5px 12px; font-size: 12px; }
 .watch-bar .watch + .watch { border-top: 1px solid var(--line); }

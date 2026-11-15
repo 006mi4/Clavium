@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ArrowRight, Plus, X } from 'lucide-react'
-import type { AiAccess, AiConfirm, AuthMethod, FtpEncoding, HostInput, HostSummary, PortForward, Protocol, SshKeySummary } from '@shared/types'
+import type { AiAccess, AiConfirm, AuthMethod, FtpEncoding, HostInput, HostSummary, PortForward, Protocol, ProxyConfig, SshKeySummary } from '@shared/types'
 import { api, hostToInput } from '../api'
 import { Group, IconButton, Note, Row, Select, Sheet, Switch, useToast } from '../ui'
 import { isMac } from '../platform'
@@ -45,6 +45,8 @@ export function HostEditor(props: {
   host?: HostSummary
   keys: SshKeySummary[]
   groups: string[]
+  /** The other hosts of the vault, to choose a jump host from. */
+  hosts?: HostSummary[]
   onClose: () => void
   onSaved: (h: HostSummary) => void
 }) {
@@ -53,11 +55,28 @@ export function HostEditor(props: {
   const [pw, setPw] = useState('')
   const [pwTouched, setPwTouched] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [proxyPw, setProxyPw] = useState('')
+  const [proxyPwTouched, setProxyPwTouched] = useState(false)
+  const hasStoredProxyPw = !!props.host?.hasProxyPassword && !proxyPwTouched
+  const jumpHosts = (props.hosts ?? []).filter((x) => x.protocol === 'ssh' && x.id !== props.host?.id)
+  const route: 'direct' | 'jump' | 'proxy' = h.proxy ? 'proxy' : h.jumpHostId !== undefined && h.protocol === 'ssh' ? 'jump' : 'direct'
+  const setRoute = (r: typeof route): void =>
+    setH((x) => ({
+      ...x,
+      jumpHostId: r === 'jump' ? (x.jumpHostId ?? jumpHosts[0]?.id ?? '') : undefined,
+      proxy: r === 'proxy' ? (x.proxy ?? { type: 'socks5', host: '', port: 1080 }) : undefined
+    }))
+  const setProxy = (patch: Partial<ProxyConfig>): void => setH((x) => (x.proxy ? { ...x, proxy: { ...x.proxy, ...patch } } : x))
   const set = <K extends keyof HostInput>(k: K, v: HostInput[K]): void => setH((x) => ({ ...x, [k]: v }))
   const isSsh = h.protocol === 'ssh'
   const usesPassword = !isSsh || h.authMethod === 'password' || h.authMethod === 'keyboard-interactive'
   const hasStored = !!props.host?.hasPassword && !pwTouched
-  const valid = h.hostname.trim() !== '' && h.port > 0 && !(isSsh && h.authMethod === 'key' && !h.keyId)
+  const valid =
+    h.hostname.trim() !== '' &&
+    h.port > 0 &&
+    !(isSsh && h.authMethod === 'key' && !h.keyId) &&
+    !(route === 'jump' && !h.jumpHostId) &&
+    !(route === 'proxy' && (!h.proxy?.host.trim() || !((h.proxy?.port ?? 0) > 0)))
 
   const save = async (): Promise<void> => {
     setBusy(true)
@@ -68,7 +87,10 @@ export function HostEditor(props: {
         authMethod: isSsh ? h.authMethod : 'password',
         keyId: isSsh && h.authMethod === 'key' ? h.keyId : undefined,
         forwards: isSsh ? h.forwards : [],
-        password: pwTouched ? (pw === '' ? null : pw) : undefined
+        password: pwTouched ? (pw === '' ? null : pw) : undefined,
+        jumpHostId: route === 'jump' ? h.jumpHostId : undefined,
+        proxy: route === 'proxy' && h.proxy ? { ...h.proxy, host: h.proxy.host.trim(), username: h.proxy.username?.trim() || undefined } : undefined,
+        proxyPassword: route !== 'proxy' ? null : proxyPwTouched ? (proxyPw === '' ? null : proxyPw) : undefined
       })
       props.onSaved(saved)
     } catch (e) {
@@ -222,6 +244,78 @@ export function HostEditor(props: {
                 </button>
               )}
             </Row>
+          )}
+        </Group>
+
+        <Group
+          title="Route"
+          caption={
+            route === 'jump'
+              ? 'Clavium signs in to the jump host first and opens this host from there. Both host keys are checked.'
+              : route === 'proxy'
+                ? 'The proxy looks up the host name. With FTP, file transfers go through the proxy as well.'
+                : undefined
+          }
+        >
+          <Row label="Connect">
+            <Select<typeof route>
+              label="Connect"
+              value={route}
+              onChange={setRoute}
+              options={[
+                { value: 'direct', label: 'Directly' },
+                ...(isSsh ? [{ value: 'jump' as const, label: 'Through a Jump Host' }] : []),
+                { value: 'proxy', label: 'Through a Proxy' }
+              ]}
+            />
+          </Row>
+          {route === 'jump' && (
+            <Row label="Jump host" hint={jumpHosts.length === 0 ? 'Add the jump host as an SSH host first.' : undefined}>
+              <select className="field" aria-label="Jump host" style={{ width: 'auto' }} value={h.jumpHostId ?? ''} onChange={(e) => set('jumpHostId', e.target.value)}>
+                <option value="">Choose…</option>
+                {jumpHosts.map((j) => (
+                  <option key={j.id} value={j.id}>
+                    {j.name}
+                  </option>
+                ))}
+              </select>
+            </Row>
+          )}
+          {route === 'proxy' && h.proxy && (
+            <>
+              <Row label="Proxy type">
+                <Select<ProxyConfig['type']>
+                  label="Proxy type"
+                  value={h.proxy.type}
+                  onChange={(v) => setProxy({ type: v, port: h.proxy?.port === 1080 || h.proxy?.port === 8080 ? (v === 'socks5' ? 1080 : 8080) : h.proxy?.port })}
+                  options={[
+                    { value: 'socks5', label: 'SOCKS5' },
+                    { value: 'http', label: 'HTTP (CONNECT)' }
+                  ]}
+                />
+              </Row>
+              <Row label="Proxy address" multi>
+                <input className="field mono" style={{ flex: 1, minWidth: 0 }} aria-label="Proxy host" spellCheck={false} value={h.proxy.host} onChange={(e) => setProxy({ host: e.target.value })} />
+                <input className="field" style={{ width: 78 }} type="number" aria-label="Proxy port" value={h.proxy.port || ''} onChange={(e) => setProxy({ port: Number(e.target.value) || 0 })} />
+              </Row>
+              <Row label="Proxy user" hint="Optional">
+                <input className="field" aria-label="Proxy user" autoComplete="off" spellCheck={false} value={h.proxy.username ?? ''} onChange={(e) => setProxy({ username: e.target.value })} />
+              </Row>
+              <Row label="Proxy password" hint={hasStoredProxyPw ? 'Saved in the vault' : 'Optional'}>
+                <input
+                  className="field"
+                  type="password"
+                  aria-label="Proxy password"
+                  autoComplete="new-password"
+                  value={proxyPw}
+                  placeholder={hasStoredProxyPw ? '••••••••' : ''}
+                  onChange={(e) => {
+                    setProxyPw(e.target.value)
+                    setProxyPwTouched(true)
+                  }}
+                />
+              </Row>
+            </>
           )}
         </Group>
 

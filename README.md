@@ -72,6 +72,9 @@
     upload, download or go both ways; a mirror also deletes at the target, after showing the list and asking
   - keep a folder up to date: Clavium watches a local folder and uploads every change, with the status in
     view and a button to stop
+  - when the connection breaks off, Clavium connects again by itself and running transfers continue where
+    they stopped; idle FTP connections are kept alive
+  - reach a server through a jump host (SSH) or through a SOCKS5 or HTTP proxy (SSH, SFTP, FTP and FTPS)
 - **Vault backup**: save the encrypted vault as one file and restore it on this or another PC
 - **Built-in text editor**: double-click a remote file to edit it and save it back to the server
   - several files in tabs, split view (two files or one file twice side by side), new files

@@ -38,9 +38,9 @@ Not part of this roadmap: a local file pane, and importing sites from FileZilla,
 
 ## Package D: connections and editing
 
-- [ ] Jump host and proxy (SOCKS5, HTTP CONNECT) for SSH and SFTP, and for FTP where possible
-- [ ] Reconnect automatically and continue running transfers
-- [ ] Keepalive for FTP
+- [x] Jump host and proxy (SOCKS5, HTTP CONNECT) for SSH and SFTP; proxy also for FTP and FTPS
+- [x] Reconnect automatically and continue running transfers
+- [x] Keepalive for FTP
 - [ ] External editor with upload on save
 - [ ] Image preview
 - [ ] Built-in editor beyond 2 MB and with more character sets than UTF-8
@@ -59,14 +59,41 @@ Not part of this roadmap: a local file pane, and importing sites from FileZilla,
 - [ ] Package C: a server without `MFMT` gives an uploaded file the time of the upload. The next
   comparison by time then sees it as newer on the server. Uploading one way leaves it alone, both
   ways downloads it once more, a mirror uploads it again. "Compare size only" avoids that.
-- [ ] Package C: the watch for "keep up to date" ends with the connection and is not started
-  again by itself. Package D (reconnect) should bring it back.
+- [ ] Package D: FTP cannot go through a jump host (only through a proxy): the FTP library needs
+  real sockets, and a channel of an SSH session is not one.
+- [ ] Package D: FTPS through a proxy (explicit and implicit TLS) is built like plain FTP through
+  a proxy but has no automated test: the FTP test server runs without TLS.
+- [ ] Package D: only file sessions reconnect by themselves. A terminal still shows "Session
+  Ended" and is reconnected by hand.
 - [ ] Package C: finding the shift of the server clock is tested against the FTP test server on
   this Mac (one time zone). The times of DOS-style listings are covered by a unit test only.
 
 ## Status
 
-Packages A, B and C are finished. Package D is open.
+Packages A, B and C are finished. Of package D the connection part is finished; the editor part
+(external editor, image preview, large files and character sets) is open.
+
+### How the connection part of package D is built
+
+- `src/main/core/proxy.ts`: `openTunnel` speaks SOCKS5 (with and without user name and password)
+  and HTTP CONNECT (with and without Basic authentication) and hands back a socket that behaves
+  like a direct connection. Host names go to the proxy as they are.
+- `src/main/core/ssh.ts`: `connectSsh` goes through `route`: a jump host (`jumpHostId`, another
+  SSH host of the vault, up to four in a row, circles are refused) or a proxy (`proxy`,
+  `proxyPassword`). Everything that uses `connectSsh` gets this: terminal, SFTP, tunnels, Docker
+  and the MCP tools. Host keys are checked as before, for the jump host and for the target.
+- FTP through a proxy: the control connection is a tunnel, and `passiveThroughProxy` in
+  `remotefs.ts` opens every data connection through the proxy as well.
+- `HostSummary` carries `hasProxyPassword`; the password itself never leaves the main process.
+- FTP keepalive: an idle `FtpFs` sends `NOOP` every 30 seconds. It also notices when the server
+  hangs up on an idle connection (before, that only showed at the next command).
+- Reconnect: `FileManager.lost` keeps the session id, tells the queue to `suspend` the session
+  (running transfers stop where they are and wait), tries to connect again with growing pauses
+  (eight attempts in about two minutes) and then calls `resume`. Watched folders and comparisons
+  stay. Events: `files:reconnecting`, `files:reconnected`; `files:closed` only when all attempts
+  failed or the server said no (wrong password, host key refused).
+- Tests: `tests/connect.test.ts` with the helpers in `tests/helpers/testProxy.ts`, and one
+  scenario in `tests/e2e/app.e2e.ts`.
 
 ### How package C is built
 

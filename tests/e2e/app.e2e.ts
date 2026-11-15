@@ -13,6 +13,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { readClipboardFiles, writeClipboardFiles } from '../../src/main/fileclipboard'
 import { startTestSshServer, TEST_PASSWORD, TEST_USER, type TestSshServer } from '../helpers/testServer'
 import { freePort } from '../helpers/fixtures'
+import { startSocksProxy } from '../helpers/testProxy'
 
 // macOS has its own keys for a few shortcuts (Cmd+H hides the app, Home only scrolls).
 const MAC = process.platform === 'darwin'
@@ -764,6 +765,57 @@ describe('Clavium desktop app', () => {
     rmSync(local, { recursive: true, force: true })
     await view().getByRole('button', { name: 'Reload' }).click()
     await row('site').waitFor({ state: 'detached' })
+  })
+
+  it('reconnects by itself when the connection breaks off, and reaches a host through a proxy', async () => {
+    const row = (name: string) => view().locator('.table tbody tr:not(.spacer)', { hasText: name })
+    // the network fails: the file view says so, connects again and goes on in the same folder
+    srv.dropClients()
+    await view().getByText(/The connection was lost\. Reconnecting, attempt 1 of 8/).waitFor()
+    await view().locator('.reconnect-bar').waitFor({ state: 'detached' })
+    writeFileSync(join(srv.root, 'after-reconnect.txt'), 'x')
+    await view().getByRole('button', { name: 'Reload' }).click()
+    await row('after-reconnect.txt').waitFor()
+    rmSync(join(srv.root, 'after-reconnect.txt'))
+
+    const proxy = await startSocksProxy({ username: 'corp', password: 'proxy secret' })
+    try {
+      await sidebar().getByRole('button', { name: 'Hosts', exact: true }).click()
+      await page.locator('.host-row', { hasText: 'staging' }).click()
+      await view().getByRole('button', { name: 'Edit' }).click()
+      let sheet = page.getByRole('dialog')
+      await sheet.getByLabel('User', { exact: true }).fill(TEST_USER)
+      // a jump host can be any other SSH host of the vault, never the host itself
+      await sheet.getByLabel('Connect', { exact: true }).selectOption({ label: 'Through a Jump Host' })
+      expect(await sheet.getByLabel('Jump host', { exact: true }).locator('option').allInnerTexts()).toEqual(['Choose…', HOST, 'db-01'])
+      await sheet.getByLabel('Connect', { exact: true }).selectOption({ label: 'Through a Proxy' })
+      // a proxy without an address cannot be saved
+      expect(await sheet.getByRole('button', { name: 'Save' }).isDisabled()).toBe(true)
+      await sheet.getByLabel('Proxy host').fill('127.0.0.1')
+      await sheet.getByLabel('Proxy port').fill(String(proxy.port))
+      await sheet.getByLabel('Proxy user', { exact: true }).fill('corp')
+      await sheet.getByLabel('Proxy password', { exact: true }).fill('proxy secret')
+      await sheet.getByRole('button', { name: 'Save' }).click()
+      await sheet.waitFor({ state: 'detached' })
+
+      // the settings are kept; the password stays in the vault and is not shown again
+      await view().getByRole('button', { name: 'Edit' }).click()
+      sheet = page.getByRole('dialog')
+      expect(await sheet.getByLabel('Connect', { exact: true }).inputValue()).toBe('proxy')
+      expect(await sheet.getByLabel('Proxy host').inputValue()).toBe('127.0.0.1')
+      expect(await sheet.getByLabel('Proxy password', { exact: true }).inputValue()).toBe('')
+      await sheet.getByText('Saved in the vault').first().waitFor()
+      await sheet.getByRole('button', { name: 'Cancel' }).click()
+
+      await view().getByRole('button', { name: 'Browse Files' }).click()
+      await row('readme.txt').waitFor()
+      expect(proxy.targets).toEqual([`127.0.0.1:${srv.port}`])
+      await view().getByRole('button', { name: 'Close Session' }).click()
+    } finally {
+      await proxy.close()
+    }
+    await sidebar().locator('.side-item', { hasText: HOST }).last().click()
+    await row('readme.txt').waitFor()
   })
 
   let token = ''
