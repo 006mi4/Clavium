@@ -252,7 +252,8 @@ describe.skipIf(process.platform === 'win32')('commands that fetch the lists', (
     const root = mkdtempSync(join(tmpdir(), 'clavium-complete-'))
     try {
       const nasty = join(root, `it's $(touch ${root}/pwned); "x"`)
-      mkdirSync(nasty)
+      // the name contains slashes, so it is several folders deep
+      mkdirSync(nasty, { recursive: true })
       expect(run(enterCheckCommand(nasty)).trim()).toBe(DIR_OK)
       expect(run(enterCheckCommand(join(root, 'missing')) + '; true')).toBe('')
       // the shell that is started reads what to do from its input, like a terminal would type it
