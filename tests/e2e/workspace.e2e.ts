@@ -312,4 +312,39 @@ describe('workspaces and terminal suggestions', () => {
     await sidebar().getByRole('button', { name: 'Close Shop production', exact: true }).click()
     await expect.poll(() => sidebar().locator('.side-item', { hasText: 'Shop production' }).count()).toBe(0)
   })
+
+  it('offers a plain terminal when a tab comes back whose screen no longer exists', async () => {
+    // the tabs of the last session, as the app would have written them with a screen open
+    await page.waitForTimeout(1200) // the app writes its own tabs a moment after the last change
+    await page.evaluate(async () => {
+      const bridge = (globalThis as unknown as { clavium: { invoke(channel: string, ...args: unknown[]): Promise<unknown> } }).clavium
+      const hosts = (await bridge.invoke('hosts:list')) as { id: string; name: string }[]
+      const web = hosts.find((h) => h.name === 'web-01') as { id: string }
+      const tab = { panes: [{ hostId: web.id, kind: 'terminal', target: { target: { attach: '4711.gone' }, name: 'gone' } }], layout: { pane: 0 }, focus: 0, zoomed: false }
+      await bridge.invoke('session:set', { tabs: [tab], active: 0 })
+    })
+    await app.close()
+    await launch()
+    await page.getByPlaceholder('Master password').fill(MASTER)
+    await page.keyboard.press('Enter')
+    await panes().getByRole('heading', { name: 'Couldn’t Connect' }).waitFor()
+    const logins = srv.logins
+    await panes().getByRole('button', { name: 'Open a Terminal on web-01 Instead' }).click()
+    await terminal(panes(), 'Welcome to the Clavium test server').waitFor()
+    expect(srv.logins).toBe(logins + 1)
+    // it is an ordinary terminal now, and it is remembered as one
+    await expect
+      .poll(
+        () =>
+          page.evaluate(async () => {
+            const bridge = (globalThis as unknown as { clavium: { invoke(channel: string): Promise<{ tabs: { panes: { target?: unknown }[] }[] } | null> } }).clavium
+            const snapshot = await bridge.invoke('session:get')
+            return snapshot?.tabs.length === 1 && snapshot.tabs[0].panes[0].target === undefined
+          }),
+        { timeout: 15000 }
+      )
+      .toBe(true)
+    await panes().getByRole('button', { name: 'Close Session' }).click()
+    await expect.poll(() => panes().count()).toBe(0)
+  })
 })

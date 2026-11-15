@@ -408,6 +408,17 @@ export function TerminalView(props: {
         />
       )}
       <div className="view-fixed">
+        {mirroring && (
+          <div className="reconnect-bar" role="status">
+            <Keyboard size={14} aria-hidden />
+            <span className="what">
+              What you type here also goes to {props.mirror?.length === 1 ? 'the other terminal' : `the ${props.mirror?.length} other terminals`} of this tab.
+            </span>
+            <button className="btn" onClick={props.onStopMirror}>
+              Stop
+            </button>
+          </div>
+        )}
         <div className="term-wrap" ref={wrapRef} style={{ ['--term-bg' as string]: dark ? DARK.background : LIGHT.background }}>
           <div ref={ref} style={{ height: '100%' }} />
           {suggest.element}
@@ -425,9 +436,28 @@ export function TerminalView(props: {
                   <>
                     <h2>{state === 'error' ? 'Couldn’t Connect' : 'Session Ended'}</h2>
                     <p>{message || 'The connection was closed.'}</p>
-                    <button className="btn prominent" onClick={() => setAttempt((a) => a + 1)}>
-                      Reconnect
-                    </button>
+                    <div className="btn-row">
+                      <button className="btn prominent" onClick={() => setAttempt((a) => a + 1)}>
+                        Reconnect
+                      </button>
+                      {/* a screen or a container that is gone will not come back by trying again */}
+                      {state === 'error' && props.target && props.onPlain && (
+                        <button
+                          className="btn"
+                          onClick={() => {
+                            props.onPlain?.()
+                            setAttempt((a) => a + 1)
+                          }}
+                        >
+                          Open a Terminal on {props.host.name} Instead
+                        </button>
+                      )}
+                      {state === 'error' && (
+                        <button className="btn" onClick={props.onClose}>
+                          Close
+                        </button>
+                      )}
+                    </div>
                   </>
                 )}
               </div>
