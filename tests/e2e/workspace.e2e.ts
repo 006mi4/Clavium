@@ -193,6 +193,25 @@ describe('workspaces and terminal suggestions', () => {
     await terminal(panes().nth(2), 'Welcome to the Clavium test server').waitFor()
     expect(await sidebar().locator('.side-item', { hasText: 'web-01 + db-01' }).count()).toBe(1)
 
+    // Three panes share the window, and two of them are narrow. Whatever their toolbars have no
+    // room for, the button that closes the pane is in reach in each of them; the same in a small window.
+    const closeInReach = (): Promise<boolean[]> =>
+      panes().evaluateAll((list) =>
+        list.map((pane) => {
+          const close = pane.querySelector('.toolbar [aria-label="Close Session"]')
+          if (!close) return false
+          const box = close.getBoundingClientRect()
+          const top = pane.ownerDocument.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)
+          return !!top && (top === close || close.contains(top)) && box.right <= pane.getBoundingClientRect().right + 1
+        })
+      )
+    expect(await closeInReach()).toEqual([true, true, true])
+    await page.setViewportSize({ width: 900, height: 560 })
+    await expect.poll(closeInReach).toEqual([true, true, true])
+    // the words on the buttons made room: the name of the host is still there in the narrow panes
+    expect(await panes().nth(1).locator('.toolbar .title').evaluate((title) => title.getBoundingClientRect().width)).toBeGreaterThan(20)
+    await page.setViewportSize({ width: 1280, height: 800 })
+
     // each pane types into its own connection
     await page.keyboard.type('third')
     await page.keyboard.press('Enter')

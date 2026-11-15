@@ -701,6 +701,17 @@ kbd { font: 11.5px var(--mono); padding: 2px 6px; border-radius: 5px; background
 /* Panes that share the width of the window have no room for the second line of the title. */
 .pane.narrow .toolbar { padding-left: 12px; gap: 4px; }
 .pane.narrow .toolbar .subtitle { display: none; }
+/* Narrow panes. The words on buttons go first, then the buttons one can do without for a moment.
+   The last button closes the pane: it stays in reach whatever else has no room. */
+.pane.split .toolbar { overflow: hidden; }
+.pane.split .toolbar > :last-child { position: sticky; right: 0; background: var(--bg); box-shadow: -8px 0 8px var(--bg); }
+.pane.split:not(.tiny) .toolbar .titles { min-width: 56px; }
+.pane.tight .toolbar { gap: 2px; }
+.pane.tight .toolbar .btn { padding: 0 8px; }
+.pane.tight .toolbar .btn .btn-text { display: none; }
+.pane.tiny .toolbar > .btn, .pane.tiny .toolbar > [aria-label='Browse Files'] { display: none; }
+.pane.tiny .reconnect-bar .what { display: none; }
+.pane.tiny .reconnect-bar { justify-content: space-between; }
 /* The divider is a control: it is drawn in a colour with a contrast of at least 3:1. */
 .pane-divider { position: absolute; z-index: 12; background: var(--text-3); touch-action: none; }
 .pane-divider.side-by-side { width: 1px; cursor: col-resize; }

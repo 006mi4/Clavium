@@ -386,13 +386,13 @@ export function TerminalView(props: {
       >
         {state !== 'connecting' && state !== 'connected' && <IconButton icon={RotateCw} label="Reconnect" onClick={() => setAttempt((a) => a + 1)} />}
         {!props.target && hasDocker && state === 'connected' && (
-          <button className="btn" title="Containers and images on this server" onClick={props.onOpenDocker}>
-            <Container size={14} /> Docker
+          <button className="btn" title="Containers and images on this server" aria-label="Docker" onClick={props.onOpenDocker}>
+            <Container size={14} /> <span className="btn-text">Docker</span>
           </button>
         )}
         {!props.target && screens?.installed && state === 'connected' && (
-          <button className="btn" title="Programs that keep running on the server (GNU screen)" onClick={(e) => void openScreensMenu(e)}>
-            <Layers size={14} /> Screens{count ? ` · ${count}` : ''}
+          <button className="btn" title="Programs that keep running on the server (GNU screen)" aria-label={count ? `Screens, ${count} running` : 'Screens'} onClick={(e) => void openScreensMenu(e)}>
+            <Layers size={14} /> <span className="btn-text">Screens{count ? ` · ${count}` : ''}</span>
           </button>
         )}
         {screen && state === 'connected' && <IconButton icon={Power} label="End Screen…" onClick={() => void endScreen()} />}
@@ -409,7 +409,7 @@ export function TerminalView(props: {
       )}
       <div className="view-fixed">
         {mirroring && (
-          <div className="reconnect-bar" role="status">
+          <div className="reconnect-bar" role="status" title="What you type here also goes to the other terminals of this tab">
             <Keyboard size={14} aria-hidden />
             <span className="what">
               What you type here also goes to {props.mirror?.length === 1 ? 'the other terminal' : `the ${props.mirror?.length} other terminals`} of this tab.

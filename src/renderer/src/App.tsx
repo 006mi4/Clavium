@@ -80,6 +80,8 @@ export function App() {
   const [tabs, setTabs] = useState<Tab[]>([])
   const menu = useMenu()
   const mainRef = useRef<HTMLElement>(null)
+  /** width of the area the panes share, in pixels: a pane that gets too narrow shortens its toolbar */
+  const [mainWidth, setMainWidth] = useState(0)
   /** a host is chosen for a new pane next to this session */
   const [picking, setPicking] = useState<{ beside: string; dir: SplitDir } | null>(null)
   /** a tab is being dragged out of the sidebar; `at`: where it would land in the visible tab */
@@ -421,6 +423,16 @@ export function App() {
   const setSessionState = (id: string, state: ConnState): void =>
     setSessions((list) => list.map((x) => (x.id === id && x.state !== state ? { ...x, state } : x)))
 
+  const mainShown = vault !== null && settings !== null && (vault === 'unlocked' || sessions.some((s) => s.unsaved > 0))
+  useEffect(() => {
+    const node = mainRef.current
+    if (!node) return
+    const observer = new ResizeObserver(() => setMainWidth(node.clientWidth))
+    observer.observe(node)
+    setMainWidth(node.clientWidth)
+    return () => observer.disconnect()
+  }, [mainShown])
+
   // keyboard shortcuts
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -669,13 +681,17 @@ export function App() {
           const focused = active === tab.id && tab.focus === s.id
           // only the pane in the top right corner has to keep clear of the window buttons
           const corner = rect.y < 0.001 && rect.x + rect.w > 0.999
+          // in pixels: below these widths the toolbar drops the words on its buttons, then some buttons
+          const width = rect.w * mainWidth
+          const tight = split && mainWidth > 0 && width < 460
+          const tiny = split && mainWidth > 0 && width < 230
           // the other terminals of the tab, while what is typed goes to all of them
           const others = tab.broadcast && s.kind === 'terminal' ? panes(tab.layout).filter((id) => id !== s.id && sessions.find((x) => x.id === id)?.kind === 'terminal') : []
           return (
             <div
               key={s.id}
               data-pane={s.id}
-              className={`view pane ${shown ? '' : 'hidden'} ${split ? 'split' : ''} ${split && focused ? 'focused' : ''} ${corner ? '' : 'inner'} ${split && rect.w < 0.6 ? 'narrow' : ''}`}
+              className={`view pane ${shown ? '' : 'hidden'} ${split ? 'split' : ''} ${split && focused ? 'focused' : ''} ${corner ? '' : 'inner'} ${split && rect.w < 0.6 ? 'narrow' : ''} ${tight ? 'tight' : ''} ${tiny ? 'tiny' : ''}`}
               style={{ left: pct(rect.x), top: pct(rect.y), width: pct(rect.w), height: pct(rect.h), right: 'auto', bottom: 'auto' }}
               role={several ? 'group' : undefined}
               aria-label={several ? `${kindLabel(s)} on ${s.host.name}` : undefined}
