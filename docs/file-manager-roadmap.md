@@ -74,6 +74,26 @@ Not part of this roadmap: a local file pane, and importing sites from FileZilla,
 - [ ] Package C: finding the shift of the server clock is tested against the FTP test server on
   this Mac (one time zone). The times of DOS-style listings are covered by a unit test only.
 
+## Checked on Windows
+
+Tried by hand on Windows 11 against a Linux server, beyond what the tests do: the queue with
+large files (parallel, pause, resume, cancel, closing the window to the tray), the clipboard in
+both directions, the external editor with Notepad, names the server has and Windows cannot hold,
+names that differ only in upper and lower case, paths longer than 260 characters, and the
+recycle bin. What came out of it:
+
+- A program can keep a file to itself on Windows. A folder that is kept up to date and the
+  external editor now wait for such a file (`readableNow` in `src/main/core/localfile.ts`)
+  instead of reporting an error and never trying again. A download whose target is open in
+  another program waits a moment, then fails with a message that says why; retrying finishes it.
+- Quitting in the middle of a download left `.clavium-part` files behind. `TransferQueue.abandon`
+  removes them at once when the app quits or the vault is locked.
+- Not tried there: dragging with a real mouse between the file manager of the system and the
+  window, and typing in the external editor (the save was written by a script).
+- A folder that is kept up to date uploads into the name it has locally: `docs` here and `Docs`
+  on a server that tells the two apart become two folders there. Comparing folders treats them
+  as one.
+
 ## Status
 
 All four packages are finished. What is left is listed under "Open points" above.
