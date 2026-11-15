@@ -757,3 +757,102 @@ kbd { font: 11.5px var(--mono); padding: 2px 6px; border-radius: 5px; background
   .suggest { border-color: var(--text); }
   .pane-divider { background: var(--text); }
 }
+
+/* ---- monitor: the load of a server ---- */
+/* The colours of the charts: validated for colour-blind readers and against the card, per mode. */
+.mon { --mon-1: #2a78d6; --mon-2: #d95926; --mon-fill: #2a78d6; --mon-cache: #86b6ef; --mon-track: rgba(0, 0, 0, 0.12); --mon-grid: rgba(0, 0, 0, 0.1); padding: 20px 24px 40px; user-select: text; }
+@media (prefers-color-scheme: dark) {
+  .mon { --mon-1: #3987e5; --mon-2: #d95926; --mon-fill: #5b9df9; --mon-cache: #1c5cab; --mon-track: rgba(255, 255, 255, 0.14); --mon-grid: rgba(255, 255, 255, 0.12); }
+}
+.pane.narrow .mon { padding: 14px 16px 32px; }
+.mon > .note { margin-bottom: 14px; }
+.mon-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr)); gap: 12px; }
+.mon-card { background: var(--bg-group); border: 1px solid var(--line); border-radius: var(--r-group); padding: 14px 16px 16px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.mon-card.wide { grid-column: 1 / -1; }
+.mon-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 18px; }
+.mon-head h2 { font: 600 14px var(--font-display); }
+.mon-note { color: var(--text-2); font-size: 12px; }
+.mon-tag { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.mon-tag.high { color: var(--orange); }
+.mon-tag.critical { color: var(--red); }
+
+.mon-top { display: flex; align-items: center; gap: 16px; }
+.mon-top .mon-facts { flex: 1; min-width: 0; }
+.mon-ring { position: relative; width: 84px; height: 84px; flex-shrink: 0; }
+.mon-ring svg { width: 100%; height: 100%; display: block; }
+.mon-ring circle { fill: none; stroke-width: 8; }
+.mon-ring .track { stroke: var(--mon-track); }
+.mon-ring .fill { stroke: var(--mon-fill); stroke-linecap: round; }
+.mon-ring.high .fill { stroke: var(--orange); }
+.mon-ring.critical .fill { stroke: var(--red); }
+.mon-ring-text { position: absolute; inset: 0; display: grid; place-content: center; grid-auto-flow: column; align-items: baseline; gap: 1px; font: 600 22px var(--font-display); font-variant-numeric: tabular-nums; }
+.mon-ring-text small { font-size: 12px; font-weight: 500; color: var(--text-2); }
+
+.mon-meter { height: 8px; border-radius: 4px; background: var(--mon-track); overflow: hidden; flex-shrink: 0; }
+.mon-meter.small { height: 6px; border-radius: 3px; }
+.mon-meter.large { height: 14px; border-radius: 7px; }
+.mon-meter > span { display: block; height: 100%; background: var(--mon-fill); border-radius: 0 4px 4px 0; }
+.mon-meter.high > span { background: var(--orange); }
+.mon-meter.critical > span { background: var(--red); }
+.mon-stack { display: flex; gap: 2px; height: 14px; border-radius: 7px; background: var(--mon-track); overflow: hidden; flex-shrink: 0; }
+.mon-stack > span { height: 100%; }
+.mon-stack .s1 { background: var(--mon-fill); }
+.mon-stack .cache { background: var(--mon-cache); }
+
+.mon-key { display: inline-block; width: 14px; height: 0; vertical-align: middle; margin-right: 5px; border-top: 2px solid var(--mon-1); flex-shrink: 0; }
+.mon-key.s2 { border-top: 2px dashed var(--mon-2); }
+.mon-key.block { width: 10px; height: 10px; border: none; border-radius: 3px; background: var(--mon-fill); }
+.mon-key.block.cache { background: var(--mon-cache); }
+.mon-key.block.free { background: var(--mon-track); }
+
+.mon-facts { display: flex; flex-direction: column; gap: 5px; margin: 0; font-size: 12px; }
+.mon-pair { display: flex; justify-content: space-between; align-items: baseline; gap: 2px 12px; flex-wrap: wrap; }
+.mon-pair dt { color: var(--text-2); }
+.mon-pair dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.mon-flow { display: flex; gap: 12px 28px; flex-wrap: wrap; margin: 0; }
+.mon-flow dt { display: flex; align-items: center; gap: 4px; color: var(--text-2); font-size: 12px; }
+.mon-flow dd { margin: 2px 0 0; display: flex; align-items: center; font: 600 20px var(--font-display); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.mon-chart { display: flex; flex-direction: column; gap: 6px; }
+.mon-chart-body { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 8px; font-size: 11px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.mon-scale { display: flex; flex-direction: column; justify-content: space-between; text-align: right; line-height: 1; margin: -5px 0; white-space: nowrap; }
+.mon-plot { position: relative; height: 120px; border-radius: 3px; cursor: crosshair; }
+.mon-plot:focus-visible { outline: 3px solid var(--focus); outline-offset: 4px; }
+.mon-plot svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.mon-plot .grid { stroke: var(--mon-grid); stroke-width: 1; }
+.mon-plot .grid.base { stroke: var(--line-strong); }
+.mon-plot .line { fill: none; stroke: var(--mon-1); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.mon-plot .line.s2 { stroke: var(--mon-2); stroke-dasharray: 5 4; stroke-linecap: butt; }
+.mon-plot .area { fill: var(--mon-1); opacity: 0.12; }
+.mon-plot-empty { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; font-size: 12px; color: var(--text-2); padding: 0 12px; }
+.mon-time { display: flex; justify-content: space-between; }
+.mon-cross { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--text-2); pointer-events: none; }
+.mon-dot { position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%; background: var(--mon-1); box-shadow: 0 0 0 2px var(--bg-group); pointer-events: none; }
+.mon-dot.s2 { background: var(--mon-2); }
+.mon-tip { position: absolute; top: 4px; z-index: 2; display: flex; flex-direction: column; gap: 2px; padding: 6px 9px; border-radius: 7px; background: var(--bg-elevated); border: 1px solid var(--line-strong); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16); font-size: 12px; color: var(--text); white-space: nowrap; pointer-events: none; }
+.mon-tip.right { margin-left: 10px; }
+.mon-tip.left { margin-right: 10px; }
+.mon-tip .when { color: var(--text-2); font-size: 11px; }
+.mon-tip .row { display: flex; align-items: center; }
+.mon-tip b { margin-left: 8px; font-weight: 600; }
+.mon-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+.mon-cores { display: grid; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); gap: 8px; font-size: 11px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.mon-cores > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.mon-temps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: auto minmax(40px, 1fr) auto; gap: 9px 12px; align-items: center; font-size: 12px; }
+.mon-temps li { display: contents; }
+.mon-temps span { color: var(--text-2); }
+.mon-temps b { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+.mon-disks { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 16px 28px; }
+.mon-disks li { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.mon-disk-head { display: flex; align-items: baseline; gap: 4px 10px; flex-wrap: wrap; font-size: 12px; }
+.mon-mount { font-weight: 600; font-size: 13px; overflow-wrap: anywhere; }
+.mon-disk-pct { margin-left: auto; font: 600 16px var(--font-display); font-variant-numeric: tabular-nums; }
+.mon-disk-text { color: var(--text-2); font-size: 12px; font-variant-numeric: tabular-nums; }
+.mon-table { margin-top: 16px; font-size: 12px; overflow-x: auto; }
+.mon-table summary { cursor: default; color: var(--text); padding: 4px 2px; border-radius: 4px; width: fit-content; }
+.mon-table table { margin-top: 8px; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.mon-table th, .mon-table td { text-align: right; padding: 3px 14px 3px 0; font-weight: 400; white-space: nowrap; }
+.mon-table thead th { color: var(--text-2); font-weight: 600; }
+.mon-table th[scope='row'] { text-align: left; }
+.mon > .caption { margin-top: 14px; max-width: 620px; }

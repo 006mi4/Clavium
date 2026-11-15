@@ -17,6 +17,7 @@ import type {
   DockerRestartPolicy,
   ChmodOptions,
   DockerStats,
+  MonitorSample,
   ExistingRule,
   ExternalEditStatus,
   FolderSize,
@@ -132,6 +133,11 @@ export const api = {
     pull: (id: string, image: string) => call<void>('docker:pull', id, image),
     create: (id: string, spec: DockerCreateSpec) => call<string>('docker:create', id, spec),
     close: (id: string) => call<void>('docker:close', id)
+  },
+  monitor: {
+    open: (hostId: string) => call<string>('monitor:open', hostId),
+    sample: (id: string) => call<MonitorSample>('monitor:sample', id),
+    close: (id: string) => call<void>('monitor:close', id)
   },
   files: {
     open: (hostId: string) => call<string>('files:open', hostId),

@@ -21,6 +21,7 @@ import { SettingsStore } from './core/settings'
 import { Vault } from './core/vault'
 import { WindowEditorBridge } from './editorBridge'
 import { DockerManager } from './docker'
+import { MonitorManager } from './monitor'
 import { FileManager } from './files'
 import { ForwardManager } from './forwards'
 import { registerIpc } from './ipc'
@@ -167,6 +168,7 @@ function runApp(): void {
     openInEditor: (path) => openInEditor(path, settings.get().externalEditor)
   }, () => settings.get())
   const docker = new DockerManager(vault, prompter, send)
+  const monitor = new MonitorManager(vault, prompter, send)
   const forwards = new ForwardManager(vault, prompter, () => send('fwd:changed'))
   const editor = new WindowEditorBridge(getWindow)
   const mcp = new McpController({
@@ -195,6 +197,7 @@ function runApp(): void {
       terminals.closeAll()
       files.closeAll()
       docker.closeAll()
+      monitor.closeAll()
       forwards.stopAll()
       mcp.service.shutdown() // drop AI connections immediately on lock
     } else {
@@ -357,7 +360,7 @@ function runApp(): void {
     session.defaultSession.setPermissionCheckHandler(() => false)
 
     const dragIcon = nativeImage.createFromPath(iconPath).resize({ width: 40, height: 40 })
-    registerIpc({ window: getWindow, vault, settings, audit, prompter, mcp, terminals, files, docker, forwards, updater, editor, dragIcon: () => dragIcon })
+    registerIpc({ window: getWindow, vault, settings, audit, prompter, mcp, terminals, files, docker, monitor, forwards, updater, editor, dragIcon: () => dragIcon })
     createWindow()
 
     // macOS: a black-and-transparent "template" image that the menu bar colours itself.
@@ -394,6 +397,7 @@ function runApp(): void {
     terminals.closeAll()
     files.closeAll()
     docker.closeAll()
+    monitor.closeAll()
     emptyTransferDir()
     forwards.stopAll()
     void mcp.shutdown()

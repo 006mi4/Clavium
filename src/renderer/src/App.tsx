@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
-import { ArrowDownCircle, ArrowLeftRight, Columns2, Container, ExternalLink, FolderOpen, History, Keyboard, KeyRound, Layers, Lock, PanelsTopLeft, Rows2, Save, Server, Settings, ShieldCheck, Sparkles, SquareTerminal, X } from 'lucide-react'
+import { Activity, ArrowDownCircle, ArrowLeftRight, Columns2, Container, ExternalLink, FolderOpen, History, Keyboard, KeyRound, Layers, Lock, PanelsTopLeft, Rows2, Save, Server, Settings, ShieldCheck, Sparkles, SquareTerminal, X } from 'lucide-react'
 import type { ActiveForward, EditorFileInfo, EditorRequest, HostSummary, PaneKind, SavedWorkspace, SessionSnapshot, SshKeySummary, TerminalTarget, UpdateState, VaultState, WorkspaceTab } from '@shared/types'
 import { MAX_PANES, dividers, dropTarget, filterLayout, insertBeside, mapLayout, neighbor, paneRects, panes, removePane, setRatio, splitPane, type Divider, type Layout, type Rect, type SplitDir } from '@shared/layout'
 import { api, on, type UiSettings } from './api'
 import { DockerView } from './components/DockerView'
+import { MonitorView } from './components/MonitorView'
 import { FilesView } from './components/FilesView'
 import { editorSessions } from './editor/registry'
 import { HostsPage } from './components/HostsPage'
@@ -22,7 +23,7 @@ type Page = 'hosts' | 'workspaces' | 'keys' | 'known' | 'ai' | 'activity' | 'set
 
 interface Session {
   id: string
-  kind: 'terminal' | 'files' | 'docker'
+  kind: PaneKind
   host: HostSummary
   state: ConnState
   /** a terminal that shows something else than a login shell: a screen, a container log, a shell in a container */
@@ -57,7 +58,7 @@ const pct = (n: number): string => `${(n * 100).toFixed(4)}%`
 let nextId = 0
 
 function kindLabel(s: Pick<Session, 'kind' | 'target'>): string {
-  return s.target ? s.target.name : s.kind === 'terminal' ? 'Terminal' : s.kind === 'docker' ? 'Docker' : 'Files'
+  return s.target ? s.target.name : s.kind === 'terminal' ? 'Terminal' : s.kind === 'docker' ? 'Docker' : s.kind === 'monitor' ? 'Monitor' : 'Files'
 }
 
 function worstState(states: ConnState[]): ConnState {
@@ -342,6 +343,10 @@ export function App() {
     }
     items.push({ label: 'Files to the Right', icon: FolderOpen, disabled: full, onSelect: () => open('files', s.host, true, undefined, beside('row')) })
     items.push({ label: 'Files Below', icon: FolderOpen, disabled: full, onSelect: () => open('files', s.host, true, undefined, beside('col')) })
+    if (ssh) {
+      items.push({ label: 'Monitor to the Right', icon: Activity, disabled: full, onSelect: () => open('monitor', s.host, true, undefined, beside('row')) })
+      items.push({ label: 'Monitor Below', icon: Activity, disabled: full, onSelect: () => open('monitor', s.host, true, undefined, beside('col')) })
+    }
     items.push('separator')
     items.push({ label: 'Another Host to the Right…', icon: Server, disabled: full, onSelect: () => setPicking({ beside: s.id, dir: 'row' }) })
     items.push({ label: 'Another Host Below…', icon: Server, disabled: full, onSelect: () => setPicking({ beside: s.id, dir: 'col' }) })
@@ -564,6 +569,8 @@ export function App() {
                         <Columns2 size={16} />
                       ) : first.kind === 'docker' ? (
                         <Container size={16} />
+                      ) : first.kind === 'monitor' ? (
+                        <Activity size={16} />
                       ) : first.target && ('attach' in first.target.target || 'create' in first.target.target) ? (
                         <Layers size={16} />
                       ) : first.kind === 'terminal' ? (
@@ -663,6 +670,7 @@ export function App() {
               reload={reloadHosts}
               openTerminal={(h) => open('terminal', h)}
               openFiles={(h) => open('files', h)}
+              openMonitor={(h) => open('monitor', h)}
               newHostSignal={newHostSignal}
             />
           )}
@@ -718,8 +726,11 @@ export function App() {
                     onOpenFiles={() => open('files', s.host)}
                     onOpenScreen={(screen) => open('terminal', s.host, true, screen)}
                     onOpenDocker={() => open('docker', s.host)}
+                    onOpenMonitor={() => open('monitor', s.host)}
                     onClose={() => void close(s.id)}
                   />
+                ) : s.kind === 'monitor' ? (
+                  <MonitorView host={s.host} active={focused} onState={(st) => setSessionState(s.id, st)} onClose={() => void close(s.id)} />
                 ) : s.kind === 'docker' ? (
                   <DockerView
                     host={s.host}

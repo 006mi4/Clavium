@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
 import {
+  Activity,
   CircleCheck,
   CircleHelp,
   Copy,
@@ -40,6 +41,7 @@ export function HostsPage(props: {
   reload: () => void
   openTerminal: (h: HostSummary) => void
   openFiles: (h: HostSummary) => void
+  openMonitor: (h: HostSummary) => void
   newHostSignal: number
 }) {
   const [query, setQuery] = useState('')
@@ -161,6 +163,7 @@ export function HostsPage(props: {
                 reload={props.reload}
                 connect={() => connect(selected)}
                 openFiles={() => props.openFiles(selected)}
+                openMonitor={() => props.openMonitor(selected)}
                 edit={() => setEditing(selected)}
                 onDeleted={() => props.onSelect(null)}
                 onDuplicated={(h) => props.onSelect(h.id)}
@@ -199,6 +202,7 @@ function HostDetail(props: {
   reload: () => void
   connect: () => void
   openFiles: () => void
+  openMonitor: () => void
   edit: () => void
   onDeleted: () => void
   onDuplicated: (h: HostSummary) => void
@@ -298,6 +302,11 @@ function HostDetail(props: {
           {ssh && (
             <button className="btn" onClick={props.openFiles}>
               <FolderOpen size={15} /> Browse Files
+            </button>
+          )}
+          {ssh && (
+            <button className="btn" onClick={props.openMonitor}>
+              <Activity size={15} /> Monitor
             </button>
           )}
           <button className="btn" onClick={props.edit}>

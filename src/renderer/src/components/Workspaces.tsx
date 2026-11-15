@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Columns2, FolderOpen, PanelsTopLeft, Pencil, Server, SquareTerminal, Trash2 } from 'lucide-react'
+import { Activity, Columns2, FolderOpen, PanelsTopLeft, Pencil, Server, SquareTerminal, Trash2 } from 'lucide-react'
 import type { HostSummary, PaneKind, SavedWorkspace } from '@shared/types'
 import { api } from '../api'
 import { Empty, Group, IconButton, Segmented, Sheet, Toolbar, formatDate, useConfirm, useToast } from '../ui'
@@ -8,7 +8,7 @@ import { Empty, Group, IconButton, Segmented, Sheet, Toolbar, formatDate, useCon
 export function describeWorkspace(w: Pick<SavedWorkspace, 'panes'>, hosts: HostSummary[]): string {
   const names = w.panes.map((p) => {
     const host = hosts.find((h) => h.id === p.hostId)
-    const what = p.target ? p.target.name : p.kind === 'terminal' ? 'Terminal' : p.kind === 'files' ? 'Files' : 'Docker'
+    const what = p.target ? p.target.name : p.kind === 'terminal' ? 'Terminal' : p.kind === 'files' ? 'Files' : p.kind === 'monitor' ? 'Monitor' : 'Docker'
     return host ? `${what} on ${host.name}` : `${what} on a deleted host`
   })
   return names.join(', ')
@@ -145,7 +145,7 @@ export function WorkspaceNameSheet(props: { title: string; initial: string; acti
 /** Choose the host that is opened next to the current pane. */
 export function HostPickerSheet(props: { hosts: HostSummary[]; direction: 'row' | 'col'; close: () => void; pick: (host: HostSummary, kind: PaneKind) => void }) {
   const [query, setQuery] = useState('')
-  const [kind, setKind] = useState<'terminal' | 'files'>('terminal')
+  const [kind, setKind] = useState<'terminal' | 'files' | 'monitor'>('terminal')
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase()
     return props.hosts
@@ -164,13 +164,14 @@ export function HostPickerSheet(props: { hosts: HostSummary[]; direction: 'row' 
     >
       <div className="picker-head">
         <input className="field" aria-label="Search hosts" placeholder="Search hosts" autoFocus spellCheck={false} value={query} onChange={(e) => setQuery(e.target.value)} />
-        <Segmented<'terminal' | 'files'>
+        <Segmented<'terminal' | 'files' | 'monitor'>
           label="What to open"
           value={kind}
           onChange={setKind}
           options={[
             { value: 'terminal', label: 'Terminal' },
-            { value: 'files', label: 'Files' }
+            { value: 'files', label: 'Files' },
+            { value: 'monitor', label: 'Monitor' }
           ]}
         />
       </div>
@@ -190,12 +191,12 @@ export function HostPickerSheet(props: { hosts: HostSummary[]; direction: 'row' 
                     props.pick(h, opens)
                   }}
                 >
-                  {opens === 'terminal' ? <SquareTerminal size={16} /> : opens === 'files' ? <FolderOpen size={16} /> : <Server size={16} />}
+                  {opens === 'terminal' ? <SquareTerminal size={16} /> : opens === 'files' ? <FolderOpen size={16} /> : opens === 'monitor' ? <Activity size={16} /> : <Server size={16} />}
                   <span className="name">{h.name}</span>
                   <span className="where mono">
                     {h.username}@{h.hostname}
                   </span>
-                  {h.protocol !== 'ssh' && kind === 'terminal' && <span className="where">files only</span>}
+                  {h.protocol !== 'ssh' && kind !== 'files' && <span className="where">files only</span>}
                 </button>
               </li>
             )

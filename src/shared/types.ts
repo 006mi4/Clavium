@@ -653,7 +653,7 @@ export interface CompletionContext {
 
 // ---- Workspaces ------------------------------------------------------------
 
-export type PaneKind = 'terminal' | 'files' | 'docker'
+export type PaneKind = 'terminal' | 'files' | 'docker' | 'monitor'
 
 /** One connection inside a tab. */
 export interface WorkspacePane {
@@ -693,3 +693,62 @@ export interface SessionSnapshot {
   /** index of the visible tab, -1 for a page of the library */
   active: number
 }
+
+// ---- monitor: the load of a server ----
+
+export interface MonitorDisk {
+  device: string
+  /** the kind of file system; empty when the server's df cannot tell */
+  type: string
+  mount: string
+  /** bytes */
+  total: number
+  used: number
+  free: number
+}
+
+export interface MonitorTemp {
+  label: string
+  celsius: number
+}
+
+/** A value the card does not report is null. */
+export interface MonitorGpu {
+  vendor: 'nvidia' | 'amd'
+  name: string
+  /** percent */
+  usage: number | null
+  /** bytes */
+  memUsed: number | null
+  memTotal: number | null
+  /** degrees Celsius */
+  temp: number | null
+  /** watts */
+  power: number | null
+}
+
+/**
+ * One measurement. Rates (percent of the CPU, bytes per second) compare two measurements, so
+ * they are null in the first one.
+ */
+export type MonitorSample =
+  | { supported: false; os: string }
+  | {
+      supported: true
+      hostname: string
+      os: string
+      kernel: string
+      /** seconds since the server started */
+      uptime: number
+      load: [number, number, number]
+      cpu: { count: number; usage: number | null; cores: number[]; iowait: number | null }
+      /** bytes; `used` is what programs hold, without the cache the system gives back at once */
+      mem: { total: number; used: number; cache: number; swapTotal: number; swapUsed: number }
+      /** bytes per second, over the real network interfaces */
+      net: { rx: number | null; tx: number | null; interfaces: { name: string; rx: number | null; tx: number | null }[] }
+      /** bytes per second over all disks; null where the server does not report disks */
+      io: { read: number | null; write: number | null } | null
+      disks: MonitorDisk[]
+      temps: MonitorTemp[]
+      gpus: MonitorGpu[]
+    }

@@ -13,6 +13,7 @@ import { MAX_TEXT_BYTES, readTextFile, writeTextFile } from './core/textfile'
 import type { Vault } from './core/vault'
 import { CONTAINER_ACTIONS, RESTART_POLICIES } from './core/docker'
 import type { DockerManager } from './docker'
+import type { MonitorManager } from './monitor'
 import type { FileManager } from './files'
 import type { ForwardManager } from './forwards'
 import type { WindowEditorBridge } from './editorBridge'
@@ -33,6 +34,7 @@ export interface IpcContext {
   terminals: TerminalManager
   files: FileManager
   docker: DockerManager
+  monitor: MonitorManager
   /** picture shown next to the pointer while files are dragged out of the window */
   dragIcon: () => Electron.NativeImage
   forwards: ForwardManager
@@ -349,7 +351,7 @@ export function registerIpc(ctx: IpcContext): void {
           z
             .object({
               hostId: id,
-              kind: z.enum(['terminal', 'files', 'docker']),
+              kind: z.enum(['terminal', 'files', 'docker', 'monitor']),
               target: z.object({ target: screenTarget, name: z.string().max(200) }).strict().optional(),
               cwd: remoteDir.optional()
             })
@@ -417,6 +419,11 @@ export function registerIpc(ctx: IpcContext): void {
   handle('docker:pull', z.tuple([id, z.string().min(1).max(255)]), (did, image) => ctx.docker.pull(did, image))
   handle('docker:create', z.tuple([id, createSpec]), (did, spec) => ctx.docker.create(did, spec))
   handle('docker:close', z.tuple([id]), (did) => ctx.docker.close(did))
+
+  // monitor
+  handle('monitor:open', z.tuple([id]), (hostId) => ctx.monitor.open(host(hostId)))
+  handle('monitor:sample', z.tuple([id]), (mid) => ctx.monitor.sample(mid))
+  handle('monitor:close', z.tuple([id]), (mid) => ctx.monitor.close(mid))
   handle('term:write', z.tuple([id, z.string().max(1024 * 1024)]), (sid, data) => ctx.terminals.write(sid, data))
   handle('term:resize', z.tuple([id, cols, rows]), (sid, c, r) => ctx.terminals.resize(sid, c, r))
   handle('term:close', z.tuple([id]), (sid) => ctx.terminals.close(sid))

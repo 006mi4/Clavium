@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { Container, FolderOpen, Keyboard, Layers, Plus, Power, RotateCw, X } from 'lucide-react'
+import { Activity, Container, FolderOpen, Keyboard, Layers, Plus, Power, RotateCw, X } from 'lucide-react'
 import type { HostSummary, ScreenList, TerminalTarget } from '@shared/types'
 import { api, on } from '../api'
 import { IconButton, Sheet, Toolbar, useConfirm, useDarkMode, useMenu, useToast, type MenuItem } from '../ui'
@@ -93,6 +93,7 @@ export function TerminalView(props: {
   onOpenFiles: () => void
   onOpenScreen: (screen: { target: TerminalTarget; name: string }) => void
   onOpenDocker: () => void
+  onOpenMonitor: () => void
   onClose: () => void
 }) {
   const toast = useToast()
@@ -396,6 +397,7 @@ export function TerminalView(props: {
           </button>
         )}
         {screen && state === 'connected' && <IconButton icon={Power} label="End Screen…" onClick={() => void endScreen()} />}
+        {!props.target && state === 'connected' && <IconButton icon={Activity} label="Monitor: Processor, Memory and Disks of This Server" onClick={props.onOpenMonitor} />}
         <IconButton icon={FolderOpen} label="Browse Files" onClick={props.onOpenFiles} />
         <IconButton icon={X} label={screen ? 'Close Tab (the screen keeps running)' : docker ? 'Close Tab' : 'Close Session'} onClick={props.onClose} />
       </Toolbar>
