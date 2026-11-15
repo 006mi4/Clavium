@@ -25,10 +25,15 @@ const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i
  * otherwise return names like "..\\..\\AppData\\evil.exe" and write outside the target folder.
  */
 export function safeLocalName(remoteName: string): string {
-  let name = remoteName.replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').replace(/[. ]+$/, '')
+  // Windows drops dots and spaces at the end of a name, so they are cut here, also after shortening.
+  let name = remoteName
+    .replace(/[\\/:*?"<>|\x00-\x1f]/g, '_')
+    .replace(/[. ]+$/, '')
+    .slice(0, 200)
+    .replace(/[. ]+$/, '')
   if (name === '' || name === '.' || name === '..') name = '_'
   if (WINDOWS_RESERVED.test(name)) name = '_' + name
-  return name.slice(0, 200)
+  return name
 }
 
 /** "report.txt", then "report (1).txt", "report (2).txt", ... until `taken` says no. */
