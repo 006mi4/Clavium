@@ -38,9 +38,22 @@ function toAttrs(st: fs.Stats) {
   }
 }
 
+/**
+ * A host key the server can read. About one key in three hundred that the SSH library generates
+ * is one it cannot parse itself ("Malformed OpenSSH private key"), which made a whole test file
+ * fail now and then. The app does the same when it generates a key for the user.
+ */
+function freshHostKey(): string {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const key = utils.generateKeyPairSync('ed25519').private
+    if (!(utils.parseKey(key) instanceof Error)) return key
+  }
+  throw new Error('Could not generate a host key for the test server')
+}
+
 export async function startTestSshServer(hostKey?: string): Promise<TestSshServer> {
   const root = mkdtempSync(join(tmpdir(), 'clavium-sftp-'))
-  const key = hostKey ?? utils.generateKeyPairSync('ed25519').private
+  const key = hostKey ?? freshHostKey()
   const setstat: TestSshServer['setstat'] = []
   const chown: TestSshServer['chown'] = []
   const tunnels: TestSshServer['tunnels'] = []
