@@ -400,8 +400,8 @@ describe('Clavium desktop app', () => {
     if (clipboardWorks) {
       await view().locator('.file-area').focus()
       await page.keyboard.press('ControlOrMeta+v')
-      await until(() => has('from-windows.txt'))
-      expect(readFileSync(join(srv.root, 'from-windows.txt'), 'utf8')).toBe('made on the PC')
+      // The file appears on the server before its content has arrived, so wait for the content.
+      await until(() => has('from-windows.txt') && readFileSync(join(srv.root, 'from-windows.txt'), 'utf8') === 'made on the PC')
 
       await writeClipboardFiles([join(local, 'readme.txt')])
       await page.keyboard.press('ControlOrMeta+v')
