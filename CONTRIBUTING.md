@@ -9,7 +9,7 @@ npm ci
 npm run dev        # app with hot reload
 npm run typecheck
 npm test           # fast tests, no external servers needed
-npm run test:e2e   # builds and drives the real app (Windows)
+npm run test:e2e   # builds and drives the real app (Windows or macOS)
 ```
 
 ## Guidelines
@@ -27,5 +27,5 @@ npm run test:e2e   # builds and drives the real app (Windows)
    (Settings → Secrets and variables → Actions). Without it the release workflow fails on purpose.
 1. Bump `version` in `package.json`, commit.
 2. `git tag v<version> && git push --tags`
-3. The *Release* workflow builds, tests and publishes the installer, portable exe, the signed update manifest,
+3. The *Release* workflow builds, tests and publishes the installer, portable exe, the macOS disk image, the signed update manifest,
    checksums and attestation.

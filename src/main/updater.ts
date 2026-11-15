@@ -33,11 +33,14 @@ export class Updater {
     private readonly onChange: (s: UpdateState) => void
   ) {
     const portable = !!process.env.PORTABLE_EXECUTABLE_FILE
-    const supported = app.isPackaged && process.platform === 'win32' && !portable
+    // In-place updates on macOS need an app signed with an Apple Developer ID, which the
+    // open-source build does not have. New versions are installed from the downloaded disk image.
+    const platform = process.platform === 'win32'
+    const supported = app.isPackaged && platform && !portable
     this.state = {
       status: supported ? 'idle' : 'unsupported',
       currentVersion: app.getVersion(),
-      reason: supported ? undefined : portable ? 'portable' : 'development'
+      reason: supported ? undefined : portable ? 'portable' : app.isPackaged && !platform ? 'platform' : 'development'
     }
     if (!supported) return
 

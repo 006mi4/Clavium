@@ -17,7 +17,7 @@ import { startTestSshServer, type TestSshServer } from './helpers/testServer'
 import { join } from 'node:path'
 
 const TOKEN = 'clv_test-token-0123456789'
-const BRIDGE_EXE = resolve(__dirname, '../resources/bin/clavium-mcp.exe')
+const BRIDGE_EXE = resolve(__dirname, '../resources/bin', process.platform === 'win32' ? 'clavium-mcp.exe' : 'clavium-mcp')
 let srv: TestSshServer
 let vault: Vault
 let prompter: RecordingPrompter
@@ -246,7 +246,7 @@ describe('MCP tools', () => {
     }
   })
 
-  it.runIf(process.platform === 'win32' && existsSync(BRIDGE_EXE))('works through the stdio bridge (clavium-mcp.exe)', async () => {
+  it.runIf(existsSync(BRIDGE_EXE))('works through the stdio bridge (clavium-mcp)', async () => {
     const child = spawn(BRIDGE_EXE, [], {
       env: { ...process.env, CLAVIUM_MCP_TOKEN: TOKEN, CLAVIUM_MCP_URL: `http://127.0.0.1:${port}/mcp` },
       stdio: ['pipe', 'pipe', 'pipe']

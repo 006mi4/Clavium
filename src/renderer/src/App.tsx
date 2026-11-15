@@ -13,6 +13,7 @@ import { ActivityPage, KeysPage, KnownHostsPage, SettingsPage } from './componen
 import { PromptHost } from './components/PromptHost'
 import { StatusDot, TerminalView, type ConnState } from './components/TerminalView'
 import { IconButton, useConfirm, useToast, type IconType } from './ui'
+import { keys as shortcutLabel, mod } from './platform'
 
 type Page = 'hosts' | 'keys' | 'known' | 'ai' | 'activity' | 'settings'
 
@@ -144,10 +145,13 @@ export function App() {
   // keyboard shortcuts
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (!e.ctrlKey || vault !== 'unlocked') return
+      // Ctrl+Tab switches tabs on both systems; on macOS Cmd+Tab belongs to the system.
+      const tab = e.ctrlKey && e.key === 'Tab'
+      if ((!mod(e) && !tab) || vault !== 'unlocked') return
       const inTerminal = (e.target as HTMLElement | null)?.closest?.('.xterm, .editor, .find-bar') != null
       const key = e.key.toLowerCase()
-      if (e.key === 'Tab' && sessions.length > 0) {
+      if (tab) {
+        if (sessions.length === 0) return
         e.preventDefault()
         const ids = sessions.map((s) => s.id)
         const i = ids.indexOf(active)
@@ -196,7 +200,7 @@ export function App() {
         <div className="sidebar-head drag">
           <Logo size={22} />
           <span className="wordmark">Clavium</span>
-          <IconButton icon={Lock} label="Lock Vault (Ctrl+Shift+L)" onClick={() => void api.vault.lock()} />
+          <IconButton icon={Lock} label={`Lock Vault (${shortcutLabel('Ctrl+Shift+L')})`} onClick={() => void api.vault.lock()} />
         </div>
 
         <nav className="sidebar-scroll" aria-label="Main">

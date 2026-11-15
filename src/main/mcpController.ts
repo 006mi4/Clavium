@@ -15,7 +15,7 @@ export interface McpControllerDeps {
   audit: AuditLog
   version: string
   editor?: EditorBridge
-  /** Path of the installed stdio bridge (clavium-mcp.exe). */
+  /** Path of the installed stdio bridge (clavium-mcp.exe on Windows, clavium-mcp on macOS). */
   bridgePath: string
   onChange: () => void
 }

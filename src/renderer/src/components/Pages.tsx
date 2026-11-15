@@ -5,6 +5,7 @@ import type { AuditEntry, KnownHost, SshKeySummary, UpdateState } from '@shared/
 import { api, on, type UiSettings } from '../api'
 import { Empty, Group, IconButton, Row, Segmented, Select, Sheet, Switch, Toolbar, ValueRow, formatDate, useConfirm, useMenu, useToast } from '../ui'
 import { StrengthBar } from './LockScreen'
+import { isMac } from '../platform'
 
 // ----------------------------------------------------------------- keys --
 
@@ -330,7 +331,7 @@ export function SettingsPage(props: { settings: UiSettings }) {
                 ]}
               />
             </Row>
-            <Row label="Lock when Windows locks or sleeps">
+            <Row label={`Lock when ${isMac ? 'the Mac' : 'Windows'} locks or sleeps`}>
               <Switch on={s.lockOnSystemLock} onChange={(v) => set({ lockOnSystemLock: v })} />
             </Row>
             <Row label="Master password" multi>
@@ -405,7 +406,9 @@ function UpdateGroup({ auto, setAuto }: { auto: boolean; setAuto: (v: boolean) =
         caption={
           u.reason === 'portable'
             ? 'The portable version can’t update itself. Download the new version from GitHub, or use the installer to get in-app updates.'
-            : 'Updates are only available in the installed app.'
+            : u.reason === 'platform'
+              ? 'The macOS version can’t update itself yet. Download new versions from the project’s GitHub releases.'
+              : 'Updates are only available in the installed app.'
         }
       >
         <ValueRow label="Installed version">{u.currentVersion}</ValueRow>

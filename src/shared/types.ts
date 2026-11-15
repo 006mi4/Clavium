@@ -226,7 +226,7 @@ export interface CopyResult {
   created: string[]
 }
 
-/** 'ready': can also be pasted in Windows · 'internal': only inside the app · 'too-large': too big for the Windows clipboard */
+/** 'ready': can also be pasted in Explorer or Finder · 'internal': only inside the app · 'too-large': too big for the system clipboard */
 export type ClipboardCopyResult = 'ready' | 'internal' | 'too-large'
 
 // ---- prompts the main process asks the user to answer -------------------
@@ -292,7 +292,7 @@ export interface UpdateState {
   error?: string
   checkedAt?: number
   /** why updates are unsupported */
-  reason?: 'portable' | 'development'
+  reason?: 'portable' | 'development' | 'platform'
 }
 
 /** Identifies the state of a remote file when it was opened, to detect changes by others. */

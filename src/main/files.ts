@@ -73,7 +73,7 @@ const DROP_WAIT_MS = 3000
 
 export class FileManager {
   private sessions = new Map<string, RemoteFs>()
-  /** Folder holding the server files that are currently on the Windows clipboard. */
+  /** Folder holding the server files that are currently on the system clipboard. */
   private clipDir: string | null = null
   private clipJob = 0
   private drag: { cancel: () => void } | null = null
@@ -181,13 +181,13 @@ export class FileManager {
 
   /**
    * "Copy" in the file browser. Files up to a size limit are also fetched into a private folder and
-   * put on the Windows clipboard, so they can be pasted in Explorer. The folder is removed with the
+   * put on the system clipboard, so they can be pasted in Explorer or Finder. The folder is removed with the
    * next copy, when the vault is locked and when the app quits.
    */
   async copyToClipboard(id: string, entries: RemoteEntry[], forWindows: boolean): Promise<ClipboardCopyResult> {
     const fs = this.get(id)
     await this.forgetClipboard()
-    // Otherwise a later paste would pick up whatever was copied in Windows before.
+    // Otherwise a later paste would pick up whatever was copied in Explorer or Finder before.
     this.desktop.clearClipboard()
     if (!forWindows) return 'internal'
     const job = this.clipJob
@@ -200,17 +200,20 @@ export class FileManager {
         staged.push(await this.downloadRecursive(fs, entry, dir, () => undefined, 0))
       }
       if (job !== this.clipJob) throw new Error('superseded')
-      await this.desktop.writeClipboardFiles(staged)
+      // Set before the clipboard changes: a paste that arrives while the clipboard is being
+      // written must already recognise these files as our own copies.
       this.clipDir = dir
+      await this.desktop.writeClipboardFiles(staged)
       return 'ready'
     } catch {
-      // Copying inside the app still works; only pasting in Windows is not available.
+      // Copying inside the app still works; only pasting in Explorer or Finder is not available.
+      if (this.clipDir === dir) this.clipDir = null
       await rm(dir, { recursive: true, force: true })
       return 'internal'
     }
   }
 
-  /** Local files on the clipboard that the user copied in Windows (not our own copies). */
+  /** Local files on the clipboard that the user copied in Explorer or Finder (not our own copies). */
   async clipboardFiles(): Promise<string[]> {
     const paths = await this.desktop.readClipboardFiles().catch(() => [])
     const own = this.clipDir

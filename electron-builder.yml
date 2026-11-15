@@ -14,15 +14,9 @@ files:
   - "!node_modules/ssh2/lib/protocol/crypto/build/**"
   - "!node_modules/cpu-features/**"
 
-asarUnpack:
-  # Pageant helper used by ssh2 for agent authentication must be executable from disk.
-  - node_modules/ssh2/util/pagent.exe
-
 extraResources:
   - from: resources/icon.png
     to: icon.png
-  - from: resources/bin/clavium-mcp.exe
-    to: bin/clavium-mcp.exe
 
 npmRebuild: false
 
@@ -37,6 +31,12 @@ electronFuses:
 
 win:
   icon: build/icon.ico
+  asarUnpack:
+    # Pageant helper used by ssh2 for agent authentication must be executable from disk.
+    - node_modules/ssh2/util/pagent.exe
+  extraResources:
+    - from: resources/bin/clavium-mcp.exe
+      to: bin/clavium-mcp.exe
   target:
     - target: nsis
       arch: [x64]
@@ -57,6 +57,30 @@ nsis:
 
 portable:
   artifactName: Clavium-${version}-portable.${ext}
+
+mac:
+  icon: build/icon.png
+  category: public.app-category.developer-tools
+  minimumSystemVersion: "11.0"
+  target:
+    # One download for Apple silicon and Intel Macs.
+    - target: dmg
+      arch: [universal]
+  extraResources:
+    - from: resources/bin/clavium-mcp
+      to: bin/clavium-mcp
+    - from: resources/trayTemplate.png
+      to: trayTemplate.png
+    - from: resources/trayTemplate@2x.png
+      to: trayTemplate@2x.png
+  # The bridge is already a universal binary, so both halves of the app carry the same file.
+  x64ArchFiles: Contents/Resources/bin/clavium-mcp
+  artifactName: Clavium-${version}-mac.${ext}
+  # No Apple Developer ID (open-source build): the app gets an ad-hoc signature, which Apple
+  # silicon needs to run it at all. Gatekeeper warns on first start; see the README.
+
+dmg:
+  title: Clavium ${version}
 
 # Used by the in-app updater to find releases. Nothing is uploaded from a developer machine
 # (builds run with --publish never); the release workflow uploads the files.

@@ -1,10 +1,16 @@
 name: Release
 
 # Push a tag like v0.1.0 (must match "version" in package.json) to build, sign and publish
-# the Windows installer and portable exe as a GitHub Release.
+# the Windows installer and portable exe, and the macOS disk image, as a GitHub Release.
 #
 # Requires the repository secret UPDATE_SIGNING_KEY (Ed25519 private key, PEM). Installed copies
 # of Clavium only accept updates signed with it. Third-party actions are pinned to commit SHAs.
+#
+# Optional, for a macOS build that opens without a Gatekeeper warning:
+#   MAC_CSC_LINK                  Developer ID Application certificate (.p12, base64)
+#   MAC_CSC_KEY_PASSWORD          password of that .p12
+#   APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID   for notarization
+# Without them the macOS app only gets an ad-hoc signature.
 on:
   push:
     tags: ['v*']
@@ -81,3 +87,57 @@ jobs:
             dist/update-manifest.json
             dist/update-manifest.json.sig
             dist/SHA256SUMS.txt
+
+  # Adds the macOS disk image to the release created above.
+  release-mac:
+    needs: release
+    runs-on: macos-latest
+    permissions:
+      contents: write # add files to the release
+      id-token: write # build provenance attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+
+      - name: Build the disk image
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$CSC_LINK" ]; then
+            npx electron-builder --mac --publish never
+          else
+            echo "No Developer ID certificate configured: building with an ad-hoc signature"
+            npx electron-builder --mac --publish never -c.mac.identity=- -c.mac.hardenedRuntime=false
+          fi
+
+      - name: SHA-256 checksum
+        run: |
+          cd dist
+          shasum -a 256 Clavium-*-mac.dmg > SHA256SUMS-mac.txt
+          cat SHA256SUMS-mac.txt
+
+      #   gh attestation verify Clavium-x.y.z-mac.dmg --repo 006mi4/Clavium
+      - uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        with:
+          subject-path: dist/Clavium-*-mac.dmg
+
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          fail_on_unmatched_files: true
+          files: |
+            dist/Clavium-*-mac.dmg
+            dist/SHA256SUMS-mac.txt

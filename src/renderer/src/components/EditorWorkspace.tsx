@@ -6,6 +6,7 @@ import { applyAiEdit, indentUnit } from '../editor/commands'
 import { detectLanguage } from '../editor/highlight'
 import { IconButton, Note, Sheet, Toolbar, useConfirm, useMenu, useToast, type MenuItem } from '../ui'
 import { EditorPane, type EditorPaneHandle } from './EditorPane'
+import { isMac, keys, mod } from '../platform'
 
 const DEFAULT_FONT = 12.5
 
@@ -42,42 +43,42 @@ const SHORTCUTS: [string, [string, string][]][] = [
   [
     'Files and Tabs',
     [
-      ['Ctrl+S / Ctrl+Shift+S', 'Save / save all'],
-      ['Ctrl+W', 'Close tab'],
-      ['Ctrl+Tab / Ctrl+Shift+Tab', 'Next / previous tab'],
-      ['Ctrl+\\', 'Split the editor'],
-      ['Alt+Z', 'Wrap long lines'],
-      ['Ctrl + / − / 0', 'Zoom in / out / reset (also Ctrl+mouse wheel)']
+      [keys('Ctrl+S / Ctrl+Shift+S'), 'Save / save all'],
+      [keys('Ctrl+W'), 'Close tab'],
+      [keys('Ctrl+Tab / Ctrl+Shift+Tab'), 'Next / previous tab'],
+      [keys('Ctrl+\\'), 'Split the editor'],
+      [keys('Alt+Z'), 'Wrap long lines'],
+      [keys('Ctrl + / − / 0', '⌘+ / ⌘− / ⌘0'), keys('Zoom in / out / reset (also Ctrl+mouse wheel)')]
     ]
   ],
   [
     'Search',
     [
-      ['Ctrl+F', 'Find'],
-      ['Ctrl+H', 'Find and replace'],
-      ['F3 / Shift+F3', 'Next / previous match'],
-      ['Ctrl+G', 'Go to line']
+      [keys('Ctrl+F'), 'Find'],
+      [keys('Ctrl+H', '⌥⌘F'), 'Find and replace'],
+      [keys('F3 / Shift+F3'), 'Next / previous match'],
+      [keys('Ctrl+G'), 'Go to line']
     ]
   ],
   [
     'Lines',
     [
-      ['Ctrl+D', 'Duplicate line or selected lines'],
-      ['Ctrl+L or Ctrl+Shift+K', 'Delete line'],
-      ['Alt+↑ / Alt+↓', 'Move line up / down (also Ctrl+Shift+↑/↓)'],
-      ['Ctrl+Enter / Ctrl+Shift+Enter', 'New line below / above'],
-      ['Ctrl+C / Ctrl+X without selection', 'Copy / cut the whole line']
+      [keys('Ctrl+D'), 'Duplicate line or selected lines'],
+      [keys('Ctrl+L or Ctrl+Shift+K'), 'Delete line'],
+      [keys('Alt+↑ / Alt+↓'), keys('Move line up / down (also Ctrl+Shift+↑/↓)')],
+      [keys('Ctrl+Enter / Ctrl+Shift+Enter'), 'New line below / above'],
+      [keys('Ctrl+C / Ctrl+X without selection'), 'Copy / cut the whole line']
     ]
   ],
   [
     'Editing',
     [
-      ['Ctrl+Z / Ctrl+Y', 'Undo / redo'],
-      ['Tab / Shift+Tab', 'Indent / outdent (also Ctrl+] and Ctrl+[)'],
-      ['Ctrl+/ or Ctrl+Q', 'Comment or uncomment lines'],
-      ['Ctrl+U / Ctrl+Shift+U', 'lowercase / UPPERCASE'],
-      ['( [ { " \'', 'Close brackets; wrap the selection'],
-      ['Home', 'Start of text, then start of line']
+      [keys('Ctrl+Z / Ctrl+Y', '⌘Z / ⇧⌘Z'), 'Undo / redo'],
+      [keys('Tab / Shift+Tab'), keys('Indent / outdent (also Ctrl+] and Ctrl+[)')],
+      [keys('Ctrl+/ or Ctrl+Q', '⌘/'), 'Comment or uncomment lines'],
+      [keys('Ctrl+U / Ctrl+Shift+U'), 'lowercase / UPPERCASE'],
+      [keys('( [ { " \''), 'Close brackets; wrap the selection'],
+      [keys('Home'), 'Start of text, then start of line']
     ]
   ]
 ]
@@ -350,7 +351,7 @@ export function EditorWorkspace(props: {
   }
 
   const onKeyDown = (e: KeyboardEvent): void => {
-    const ctrl = e.ctrlKey || e.metaKey
+    const ctrl = mod(e)
     const key = e.key.toLowerCase()
     const take = (fn: () => void): void => {
       e.preventDefault()
@@ -359,13 +360,14 @@ export function EditorWorkspace(props: {
     }
     if (ctrl && !e.altKey && key === 's') take(() => (e.shiftKey ? void saveAll() : pane.active && void save(pane.active)))
     else if (ctrl && !e.shiftKey && !e.altKey && key === 'w') take(() => pane.active && void closeTabs(Math.min(focus, panes.length - 1), [pane.active]))
-    else if (ctrl && e.key === 'Tab' && pane.tabs.length > 1) {
+    else if (e.ctrlKey && e.key === 'Tab' && pane.tabs.length > 1) {
       take(() => {
         const i = pane.tabs.indexOf(pane.active ?? '')
         activate(Math.min(focus, panes.length - 1), pane.tabs[(i + (e.shiftKey ? -1 : 1) + pane.tabs.length) % pane.tabs.length])
       })
     } else if (ctrl && !e.shiftKey && e.key === '\\') take(toggleSplit)
-    else if (e.altKey && !ctrl && key === 'z') take(() => setWrap((w) => !w))
+    // Option changes the character that is typed on macOS, so the key itself is checked there.
+    else if (e.altKey && !ctrl && (isMac ? e.keyCode === 90 : key === 'z')) take(() => setWrap((w) => !w))
     else if (ctrl && (e.key === '+' || e.key === '=')) take(() => zoom(1))
     else if (ctrl && e.key === '-') take(() => zoom(-1))
     else if (ctrl && e.key === '0') take(() => zoom(0))
@@ -395,10 +397,10 @@ export function EditorWorkspace(props: {
             )
           }
         >
-          <IconButton icon={Search} label="Find (Ctrl+F)" disabled={activeDoc?.status !== 'ready'} onClick={() => paneCommand('find')} />
-          <IconButton icon={Replace} label="Find and Replace (Ctrl+H)" disabled={activeDoc?.status !== 'ready'} onClick={() => paneCommand('replace')} />
+          <IconButton icon={Search} label={`Find (${keys('Ctrl+F')})`} disabled={activeDoc?.status !== 'ready'} onClick={() => paneCommand('find')} />
+          <IconButton icon={Replace} label={`Find and Replace (${keys('Ctrl+H', '⌥⌘F')})`} disabled={activeDoc?.status !== 'ready'} onClick={() => paneCommand('replace')} />
           <span className="sep" />
-          <IconButton icon={Columns2} label={panes.length === 1 ? 'Split Editor (Ctrl+\\)' : 'Close Split (Ctrl+\\)'} pressed={panes.length > 1} onClick={toggleSplit} />
+          <IconButton icon={Columns2} label={`${panes.length === 1 ? 'Split Editor' : 'Close Split'} (${keys('Ctrl+\\')})`} pressed={panes.length > 1} onClick={toggleSplit} />
           <IconButton icon={WrapText} label="Wrap Long Lines (Alt+Z)" pressed={wrap} onClick={() => setWrap((w) => !w)} />
           <IconButton
             icon={MoreHorizontal}

@@ -137,7 +137,8 @@ export function TerminalView(props: {
         if (sessionRef.current && t) void api.term.write(sessionRef.current, t)
       })
     }
-    // Ctrl+Shift+C / Ctrl+Shift+V; right-click copies the selection or pastes
+    // Ctrl+Shift+C / Ctrl+Shift+V; right-click copies the selection or pastes.
+    // On macOS Cmd+C / Cmd+V also work: they come from the Edit menu of the app.
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== 'keydown') return true
       if (e.ctrlKey && e.shiftKey && e.code === 'KeyC') {

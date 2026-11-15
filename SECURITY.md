@@ -13,12 +13,13 @@ Only the latest release receives security fixes.
 ## Threat model
 
 Clavium protects **credentials at rest** and **remote servers against unwanted AI actions**. It assumes the
-Windows user account it runs in is not compromised: malware running as the same user can read memory, log
+user account it runs in (Windows or macOS) is not compromised: malware running as the same user can read memory, log
 keystrokes or modify the program, and no desktop application can defend against that.
 
 ### Vault
 
-- File: `%APPDATA%\Clavium\vault.json` (previous version kept as `vault.json.bak`).
+- File: `%APPDATA%\Clavium\vault.json` on Windows, `~/Library/Application Support/Clavium/vault.json` on macOS
+  (previous version kept as `vault.json.bak`).
 - Key derivation: scrypt, N = 2¹⁷, r = 8, p = 1, 256-bit random salt. KDF parameters from the file are
   range-checked so a tampered file cannot force weak or absurdly expensive parameters.
 - Encryption: AES-256-GCM with a fresh 96-bit IV for every save. The header (format, version, KDF
@@ -26,7 +27,7 @@ keystrokes or modify the program, and no desktop application can defend against 
 - The derived key is kept in memory only while unlocked and overwritten on lock. (JavaScript strings, e.g.
   decrypted passwords in use, cannot be wiped reliably — a known limitation of managed runtimes.)
 - After 3 wrong master passwords, unlocking is throttled exponentially (up to 60 s).
-- Auto-lock after inactivity (default 15 min) and on Windows lock / sleep. Locking disconnects all sessions.
+- Auto-lock after inactivity (default 15 min) and when the computer is locked or goes to sleep. Locking disconnects all sessions.
 - There is no recovery. A lost master password means lost data.
 
 Non-secret preferences live in `settings.json`; the AI activity log in `audit.log`.
@@ -77,19 +78,19 @@ Non-secret preferences live in `settings.json`; the AI activity log in `audit.lo
 
 - Moving and copying on the server never replaces an existing item; an upload that would replace something
   asks first. Moves, renames and copies can be undone while the app is running.
-- Dragging items out of the window: Windows does not tell an application where a dragged item was dropped.
-  Clavium therefore drags a small marker file with a random name and watches the local drives for the
-  moment Windows copies it; the folder it appears in is the download target. The marker is deleted again
+- Dragging items out of the window: Windows and macOS do not tell an application where a dragged item was
+  dropped. Clavium therefore drags a small marker file with a random name and watches the local drives (on
+  macOS the home folder and `/Volumes`) for the moment Explorer or Finder copies it; the folder it appears in is the download target. The marker is deleted again
   only after its content (a random 256-bit value) has been checked, so no other file can be removed. The
   drives are watched only while a drag is in progress, and nothing about other files is stored.
-- Copying server files to the Windows clipboard, and copying between two servers, needs the files on this
+- Copying server files to the system clipboard, and copying between two servers, needs the files on this
   computer for a moment. They are kept in `transfer-tmp` inside Clavium's data folder (not in a shared
   temp folder), limited to 200 MB per copy for the clipboard, and removed with the next copy, when the vault
   is locked, when the app quits and at every start.
 - Every transfer runs on a channel (SFTP) or connection (FTP) of its own. Cancelling closes only that one;
   a download that did not finish is deleted, and so is an upload that the user stopped while it was running.
-- The Windows clipboard is accessed through the PowerShell that ships with Windows, started by its full
-  path; file names are passed in an environment variable and never become part of the command text.
+- File lists on the clipboard are accessed through a scripting host that ships with the system, started by
+  its full path: PowerShell on Windows, `/usr/bin/osascript` on macOS; file names are passed in an environment variable and never become part of the command text.
 
 ### FTP / FTPS
 
@@ -116,9 +117,10 @@ Non-secret preferences live in `settings.json`; the AI activity log in `audit.lo
 - Prompt injection: an AI agent may be tricked by data it reads (files, command output). Approvals exist
   precisely for this. Do not set *Full* access without approval on production systems.
 
-### `clavium-mcp.exe` (stdio bridge)
+### `clavium-mcp` (stdio bridge)
 
-A ~20 KB C# program (`bridge/ClaviumMcpBridge.cs`) that forwards stdio JSON-RPC to the local HTTP endpoint.
+A small program that forwards stdio JSON-RPC to the local HTTP endpoint: ~20 KB of C# on Windows
+(`bridge/ClaviumMcpBridge.cs`), Swift with Foundation only on macOS (`bridge/ClaviumMcpBridge.swift`).
 It contains no secrets; the token is passed by the AI client via the `CLAVIUM_MCP_TOKEN` environment variable.
 
 ### Electron hardening
@@ -133,7 +135,9 @@ It contains no secrets; the token is passed by the AI client via the `CLAVIUM_MC
 
 ### Updates
 
-The installed (NSIS) build can update itself from the project's GitHub releases.
+The installed (NSIS) build for Windows can update itself from the project's GitHub releases. The macOS
+build does not update itself: in-place updates there need an app signed with an Apple Developer ID, so new
+versions are installed from the downloaded disk image.
 
 - Each release contains `update-manifest.json` (version, installer file name, size, SHA-512) and
   `update-manifest.json.sig`, an Ed25519 signature over the exact manifest bytes.

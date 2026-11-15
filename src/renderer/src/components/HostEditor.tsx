@@ -3,6 +3,7 @@ import { ArrowRight, Plus, X } from 'lucide-react'
 import type { AiAccess, AiConfirm, AuthMethod, HostInput, HostSummary, PortForward, Protocol, SshKeySummary } from '@shared/types'
 import { api, hostToInput } from '../api'
 import { Group, IconButton, Note, Row, Select, Sheet, Switch, useToast } from '../ui'
+import { isMac } from '../platform'
 
 const DEFAULT_PORT: Record<Protocol, number> = { ssh: 22, ftps: 21, 'ftps-implicit': 990, ftp: 21 }
 
@@ -153,7 +154,7 @@ export function HostEditor(props: {
 
         <Group
           title="Sign-In"
-          caption={isSsh && h.authMethod === 'agent' ? 'Uses the Windows OpenSSH agent or Pageant. Agent forwarding is never enabled.' : undefined}
+          caption={isSsh && h.authMethod === 'agent' ? (isMac ? 'Uses the SSH agent of macOS (the keys from ssh-add). Agent forwarding is never enabled.' : 'Uses the Windows OpenSSH agent or Pageant. Agent forwarding is never enabled.') : undefined}
         >
           {isSsh && (
             <Row label="Method">
