@@ -319,7 +319,7 @@ export interface UpdateState {
   error?: string
   checkedAt?: number
   /** why updates are unsupported */
-  reason?: 'portable' | 'development' | 'platform'
+  reason?: 'portable' | 'development' | 'unsigned'
 }
 
 /** Identifies the state of a remote file when it was opened, to detect changes by others. */

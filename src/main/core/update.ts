@@ -10,7 +10,25 @@ import { basename } from 'node:path'
  * `update-manifest.json.sig`, an Ed25519 signature over the exact manifest bytes.
  * The app only installs an installer that matches a manifest signed with the key below.
  * So a download is trusted because of the signature, not because of where it came from.
+ *
+ * Windows and macOS have a manifest each (`update-manifest-mac.json` for macOS), because they
+ * install different files. A manifest is only accepted for the system it was made for.
  */
+
+/** The systems that can update themselves. */
+export type UpdatePlatform = 'win32' | 'darwin'
+
+/** The file an installed copy downloads to update itself: the installer on Windows, the zipped app on macOS. */
+export function updateFileName(version: string, platform: UpdatePlatform): string {
+  return platform === 'darwin' ? `Clavium-${version}-mac.zip` : `Clavium-Setup-${version}.exe`
+}
+
+/** Name of the signed manifest in a release. */
+export function manifestName(platform: UpdatePlatform): string {
+  return platform === 'darwin' ? 'update-manifest-mac.json' : 'update-manifest.json'
+}
+
+const currentPlatform = (): UpdatePlatform => (process.platform === 'darwin' ? 'darwin' : 'win32')
 
 /** Ed25519 public key (SPKI, base64). The private key never enters the repository. */
 export const UPDATE_PUBLIC_KEY = 'MCowBQYDK2VwAyEAHC3/i4FpcHPG2vV8mmgBGPlFF6aDh7b80bT+TYbva2Y='
@@ -23,7 +41,7 @@ const MAX_INSTALLER_BYTES = 600 * 1024 * 1024
 export interface UpdateManifest {
   format: 'clavium-update'
   version: string
-  /** file name of the installer, e.g. Clavium-Setup-1.2.3.exe */
+  /** file name of the installer, e.g. Clavium-Setup-1.2.3.exe or Clavium-1.2.3-mac.zip */
   file: string
   size: number
   /** base64 */
@@ -73,7 +91,7 @@ export function verifySignedManifest(manifestBytes: Buffer, signatureBase64: str
     m.format !== 'clavium-update' ||
     typeof m.version !== 'string' ||
     typeof m.file !== 'string' ||
-    !/^Clavium-Setup-[0-9.]+\.exe$/.test(m.file) ||
+    !/^Clavium-(Setup-[0-9.]+\.exe|[0-9.]+-mac\.zip)$/.test(m.file) ||
     !Number.isSafeInteger(m.size) ||
     m.size <= 0 ||
     m.size > MAX_INSTALLER_BYTES ||
@@ -88,16 +106,22 @@ export function verifySignedManifest(manifestBytes: Buffer, signatureBase64: str
 
 /**
  * A signed manifest is only acceptable for the update we asked for:
- * the exact offered version, and strictly newer than what is installed (no downgrade, no replay).
+ * the exact offered version, strictly newer than what is installed (no downgrade, no replay),
+ * and naming the file of this system.
  */
-export function assertManifestFor(m: UpdateManifest, offeredVersion: string, installedVersion: string): void {
+export function assertManifestFor(
+  m: UpdateManifest,
+  offeredVersion: string,
+  installedVersion: string,
+  platform: UpdatePlatform = currentPlatform()
+): void {
   if (m.version !== offeredVersion) {
     throw new UpdateVerificationError(`Signed manifest is for version ${m.version}, not ${offeredVersion}`)
   }
   if (!isNewer(m.version, installedVersion)) {
     throw new UpdateVerificationError(`Version ${m.version} is not newer than the installed ${installedVersion}`)
   }
-  if (m.file !== `Clavium-Setup-${m.version}.exe`) {
+  if (m.file !== updateFileName(m.version, platform)) {
     throw new UpdateVerificationError('Signed manifest names an unexpected installer file')
   }
 }
@@ -146,15 +170,16 @@ export async function fetchSignedManifest(
   version: string,
   installedVersion: string,
   fetchImpl: FetchLike = fetch as unknown as FetchLike,
-  publicKeyBase64 = UPDATE_PUBLIC_KEY
+  publicKeyBase64 = UPDATE_PUBLIC_KEY,
+  platform: UpdatePlatform = currentPlatform()
 ): Promise<UpdateManifest> {
   parseVersion(version)
   const base = `https://github.com/${UPDATE_REPO.owner}/${UPDATE_REPO.repo}/releases/download/v${version}`
   const [manifest, sig] = await Promise.all([
-    fetchSmall(`${base}/update-manifest.json`, fetchImpl),
-    fetchSmall(`${base}/update-manifest.json.sig`, fetchImpl)
+    fetchSmall(`${base}/${manifestName(platform)}`, fetchImpl),
+    fetchSmall(`${base}/${manifestName(platform)}.sig`, fetchImpl)
   ])
   const m = verifySignedManifest(manifest, sig.toString('utf8'), publicKeyBase64)
-  assertManifestFor(m, version, installedVersion)
+  assertManifestFor(m, version, installedVersion, platform)
   return m
 }

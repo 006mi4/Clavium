@@ -1,4 +1,6 @@
 // Creates dist/update-manifest.json and dist/update-manifest.json.sig for the built installer.
+// On macOS (or with --platform mac) it signs the zipped app instead and writes
+// dist/update-manifest-mac.json and its .sig. The names must match src/main/core/update.ts.
 // The Ed25519 private key (PKCS#8 PEM) comes from the UPDATE_SIGNING_KEY environment variable
 // or from a file:  node scripts/sign-update.mjs --key C:\path\to\update-signing-key.pem
 // The result is verified against the public key compiled into the app before the script succeeds.
@@ -7,7 +9,10 @@ import { readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const { version } = JSON.parse(readFileSync('package.json', 'utf8'))
-const file = `Clavium-Setup-${version}.exe`
+const platformArg = process.argv.indexOf('--platform')
+const mac = platformArg > 0 ? process.argv[platformArg + 1] === 'mac' : process.platform === 'darwin'
+const file = mac ? `Clavium-${version}-mac.zip` : `Clavium-Setup-${version}.exe`
+const manifestFile = mac ? 'update-manifest-mac.json' : 'update-manifest.json'
 const dist = process.env.CLAVIUM_DIST || 'dist'
 const installer = join(dist, file)
 
@@ -46,6 +51,6 @@ if (!verify(null, manifest, trusted, signature)) {
   process.exit(1)
 }
 
-writeFileSync(join(dist, 'update-manifest.json'), manifest)
-writeFileSync(join(dist, 'update-manifest.json.sig'), signature.toString('base64') + '\n')
+writeFileSync(join(dist, manifestFile), manifest)
+writeFileSync(join(dist, `${manifestFile}.sig`), signature.toString('base64') + '\n')
 console.log(`signed ${file} (${version})`)

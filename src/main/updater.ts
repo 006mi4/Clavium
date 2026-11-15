@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process'
+import { resolve } from 'node:path'
 import { app } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import type { UpdateState } from '@shared/types'
@@ -13,10 +15,24 @@ import {
 const CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000
 
 /**
- * In-place updates for the installed (NSIS) build.
+ * macOS replaces the app in place only when the new copy is signed by the same Apple Developer ID
+ * as the running one. A build without one (ad-hoc signature, e.g. built from source) could download
+ * an update but never install it, so it does not offer updates at all.
+ */
+function hasDeveloperId(): boolean {
+  // <bundle>.app/Contents/MacOS/Clavium
+  const bundle = resolve(process.execPath, '..', '..', '..')
+  // codesign writes its report to stderr. An ad-hoc signature has "TeamIdentifier=not set".
+  const report = spawnSync('/usr/bin/codesign', ['-dv', bundle], { encoding: 'utf8', timeout: 5000 })
+  return /^TeamIdentifier=[A-Z0-9]{10}$/m.test(report.stderr ?? '')
+}
+
+/**
+ * In-place updates for the installed build: the NSIS installer on Windows, the app in the
+ * Applications folder on macOS.
  *
  * electron-updater handles the mechanics (finding the latest release, downloading, running the
- * installer). Trust comes from our own check: nothing is installed unless the downloaded file
+ * installer or handing the new app to the updater of macOS). Trust comes from our own check: nothing is installed unless the downloaded file
  * matches a manifest signed with the Clavium release key (see core/update.ts).
  *  - never downloads without the user clicking "Download"
  *  - never installs on its own; only `install()` does, after re-verifying the file
@@ -27,20 +43,23 @@ export class Updater {
   private manifest: UpdateManifest | null = null
   private verifiedFile: string | null = null
   private timer: NodeJS.Timeout | null = null
+  /** true once the user asked to install: macOS may still refuse, e.g. when the app runs from the disk image */
+  private installing = false
 
   constructor(
     private readonly settings: SettingsStore,
-    private readonly onChange: (s: UpdateState) => void
+    private readonly onChange: (s: UpdateState) => void,
+    /** Called right before the app is closed to install an update. */
+    private readonly onInstall: () => void = () => undefined
   ) {
     const portable = !!process.env.PORTABLE_EXECUTABLE_FILE
-    // In-place updates on macOS need an app signed with an Apple Developer ID, which the
-    // open-source build does not have. New versions are installed from the downloaded disk image.
-    const platform = process.platform === 'win32'
-    const supported = app.isPackaged && platform && !portable
+    const unsigned = app.isPackaged && process.platform === 'darwin' && !hasDeveloperId()
+    const platform = process.platform === 'win32' || process.platform === 'darwin'
+    const supported = app.isPackaged && platform && !portable && !unsigned
     this.state = {
       status: supported ? 'idle' : 'unsupported',
       currentVersion: app.getVersion(),
-      reason: supported ? undefined : portable ? 'portable' : app.isPackaged && !platform ? 'platform' : 'development'
+      reason: supported ? undefined : portable ? 'portable' : unsigned ? 'unsigned' : 'development'
     }
     if (!supported) return
 
@@ -64,7 +83,10 @@ export class Updater {
     })
     autoUpdater.on('update-downloaded', (e) => void this.verifyDownloaded(e.downloadedFile))
     autoUpdater.on('error', (e) => {
-      if (this.state.status === 'checking' || this.state.status === 'downloading') this.fail(e)
+      if (this.state.status === 'checking' || this.state.status === 'downloading' || this.installing) {
+        this.installing = false
+        this.fail(e)
+      }
     })
   }
 
@@ -80,7 +102,7 @@ export class Updater {
   private fail(e: unknown): void {
     const raw = (e as Error).message ?? String(e)
     const offline = /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ERR_INTERNET|ERR_NAME|net::/i.test(raw)
-    const noRelease = /404|latest\.yml|No published versions/i.test(raw)
+    const noRelease = /404|latest(-mac)?\.yml|No published versions/i.test(raw)
     this.manifest = null
     this.verifiedFile = null
     this.set({
@@ -141,7 +163,7 @@ export class Updater {
     }
   }
 
-  /** Quit, run the verified installer silently and start the new version. */
+  /** Quit, install the verified update silently and start the new version. */
   async install(): Promise<void> {
     if (this.state.status !== 'ready' || !this.manifest || !this.verifiedFile) return
     try {
@@ -150,6 +172,10 @@ export class Updater {
     } catch (e) {
       return this.fail(e)
     }
+    // macOS closes the windows before it quits the app. Tell the app first, so that
+    // "close to tray" does not keep the window open and the update waiting.
+    this.onInstall()
+    this.installing = true
     autoUpdater.quitAndInstall(true, true)
   }
 }

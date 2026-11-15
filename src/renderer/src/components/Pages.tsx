@@ -406,8 +406,8 @@ function UpdateGroup({ auto, setAuto }: { auto: boolean; setAuto: (v: boolean) =
         caption={
           u.reason === 'portable'
             ? 'The portable version can’t update itself. Download the new version from GitHub, or use the installer to get in-app updates.'
-            : u.reason === 'platform'
-              ? 'The macOS version can’t update itself yet. Download new versions from the project’s GitHub releases.'
+            : u.reason === 'unsigned'
+              ? 'This copy of Clavium is not signed with an Apple Developer ID, so it can’t update itself. Download new versions from the project’s GitHub releases.'
               : 'Updates are only available in the installed app.'
         }
       >

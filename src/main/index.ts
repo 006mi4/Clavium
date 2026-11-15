@@ -148,7 +148,13 @@ function runApp(): void {
     onChange: () => send('mcp:changed')
   })
 
-  const updater = new Updater(settings, (s) => send('update:changed', s))
+  const updater = new Updater(
+    settings,
+    (s) => send('update:changed', s),
+    () => {
+      quitting = true
+    }
+  )
 
   vault.onStateChange((state) => {
     if (state !== 'unlocked') {

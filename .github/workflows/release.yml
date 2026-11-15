@@ -10,7 +10,7 @@ name: Release
 #   MAC_CSC_LINK                  Developer ID Application certificate (.p12, base64)
 #   MAC_CSC_KEY_PASSWORD          password of that .p12
 #   APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID   for notarization
-# Without them the macOS app only gets an ad-hoc signature.
+# Without them the macOS app only gets an ad-hoc signature and cannot update itself.
 on:
   push:
     tags: ['v*']
@@ -124,20 +124,33 @@ jobs:
             npx electron-builder --mac --publish never -c.mac.identity=- -c.mac.hardenedRuntime=false
           fi
 
-      - name: SHA-256 checksum
+      # Installed copies on macOS only accept a zip that matches this signed manifest.
+      - name: Sign the update manifest
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: node scripts/sign-update.mjs --platform mac
+
+      - name: SHA-256 checksums
         run: |
           cd dist
-          shasum -a 256 Clavium-*-mac.dmg > SHA256SUMS-mac.txt
+          shasum -a 256 Clavium-*-mac.dmg Clavium-*-mac.zip > SHA256SUMS-mac.txt
           cat SHA256SUMS-mac.txt
 
       #   gh attestation verify Clavium-x.y.z-mac.dmg --repo 006mi4/Clavium
       - uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
         with:
-          subject-path: dist/Clavium-*-mac.dmg
+          subject-path: |
+            dist/Clavium-*-mac.dmg
+            dist/Clavium-*-mac.zip
 
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           fail_on_unmatched_files: true
           files: |
             dist/Clavium-*-mac.dmg
+            dist/Clavium-*-mac.zip
+            dist/Clavium-*-mac.zip.blockmap
+            dist/latest-mac.yml
+            dist/update-manifest-mac.json
+            dist/update-manifest-mac.json.sig
             dist/SHA256SUMS-mac.txt

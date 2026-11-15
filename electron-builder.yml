@@ -66,6 +66,9 @@ mac:
     # One download for Apple silicon and Intel Macs.
     - target: dmg
       arch: [universal]
+    # The zip is what an installed copy downloads to update itself.
+    - target: zip
+      arch: [universal]
   extraResources:
     - from: resources/bin/clavium-mcp
       to: bin/clavium-mcp
@@ -76,8 +79,9 @@ mac:
   # The bridge is already a universal binary, so both halves of the app carry the same file.
   x64ArchFiles: Contents/Resources/bin/clavium-mcp
   artifactName: Clavium-${version}-mac.${ext}
-  # No Apple Developer ID (open-source build): the app gets an ad-hoc signature, which Apple
-  # silicon needs to run it at all. Gatekeeper warns on first start; see the README.
+  # Releases are signed with a Developer ID and notarized (see release.yml). Without a
+  # certificate, `npm run dist:mac:adhoc` gives the app an ad-hoc signature, which Apple silicon
+  # needs to run it at all; such a build warns on first start and cannot update itself.
 
 dmg:
   title: Clavium ${version}

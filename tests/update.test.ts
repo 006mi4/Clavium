@@ -83,12 +83,39 @@ describe('signed manifest', () => {
 
   it('blocks downgrades, replays of other versions and mismatched file names', () => {
     const m = verifySignedManifest(manifestBytes(), sigOf(manifestBytes()), PUB)
-    expect(() => assertManifestFor(m, '1.2.0', '1.1.0')).not.toThrow()
-    expect(() => assertManifestFor(m, '1.3.0', '1.1.0')).toThrow(/not 1\.3\.0/) // old signed manifest offered as a newer version
-    expect(() => assertManifestFor(m, '1.2.0', '1.2.0')).toThrow(/not newer/)
-    expect(() => assertManifestFor(m, '1.2.0', '2.0.0')).toThrow(/not newer/)
+    expect(() => assertManifestFor(m, '1.2.0', '1.1.0', 'win32')).not.toThrow()
+    expect(() => assertManifestFor(m, '1.3.0', '1.1.0', 'win32')).toThrow(/not 1\.3\.0/) // old signed manifest offered as a newer version
+    expect(() => assertManifestFor(m, '1.2.0', '1.2.0', 'win32')).toThrow(/not newer/)
+    expect(() => assertManifestFor(m, '1.2.0', '2.0.0', 'win32')).toThrow(/not newer/)
     const odd = { ...m, file: 'Clavium-Setup-9.9.9.exe' }
-    expect(() => assertManifestFor(odd, '1.2.0', '1.1.0')).toThrow(/unexpected installer/)
+    expect(() => assertManifestFor(odd, '1.2.0', '1.1.0', 'win32')).toThrow(/unexpected installer/)
+  })
+})
+
+describe('macOS manifest', () => {
+  const macFile = { file: 'Clavium-1.2.0-mac.zip' }
+
+  it('is accepted on macOS only, and the Windows one on Windows only', () => {
+    const mac = verifySignedManifest(manifestBytes(macFile), sigOf(manifestBytes(macFile)), PUB)
+    const win = verifySignedManifest(manifestBytes(), sigOf(manifestBytes()), PUB)
+    expect(() => assertManifestFor(mac, '1.2.0', '1.1.0', 'darwin')).not.toThrow()
+    expect(() => assertManifestFor(mac, '1.2.0', '1.1.0', 'win32')).toThrow(/unexpected installer/)
+    expect(() => assertManifestFor(win, '1.2.0', '1.1.0', 'darwin')).toThrow(/unexpected installer/)
+  })
+
+  it('is fetched from its own file in the release', async () => {
+    const bytes = manifestBytes(macFile)
+    const files = { 'update-manifest-mac.json': bytes, 'update-manifest-mac.json.sig': Buffer.from(sigOf(bytes)) }
+    expect((await fetchSignedManifest('1.2.0', '1.0.0', fakeFetch(files), PUB, 'darwin')).file).toBe('Clavium-1.2.0-mac.zip')
+    // the Windows manifest of the same release is not there for it to fall back on
+    await expect(fetchSignedManifest('1.2.0', '1.0.0', fakeFetch(files), PUB, 'win32')).rejects.toThrow(/HTTP 404/)
+  })
+
+  it('rejects other file names', () => {
+    for (const file of ['Clavium-1.2.0-mac.dmg', 'Clavium-1.2.0-mac.zip.exe', '../Clavium-1.2.0-mac.zip', 'Other-1.2.0-mac.zip']) {
+      const bytes = manifestBytes({ file })
+      expect(() => verifySignedManifest(bytes, sigOf(bytes), PUB)).toThrow(/malformed/)
+    }
   })
 })
 
@@ -120,16 +147,16 @@ describe('fetching the manifest', () => {
   const files = { 'update-manifest.json': bytes, 'update-manifest.json.sig': Buffer.from(sigOf(bytes)) }
 
   it('returns the verified manifest', async () => {
-    expect((await fetchSignedManifest('1.2.0', '1.0.0', fakeFetch(files), PUB)).file).toBe('Clavium-Setup-1.2.0.exe')
+    expect((await fetchSignedManifest('1.2.0', '1.0.0', fakeFetch(files), PUB, 'win32')).file).toBe('Clavium-Setup-1.2.0.exe')
   })
 
   it('fails closed: missing signature, foreign redirect, wrong version, oversized manifest', async () => {
-    await expect(fetchSignedManifest('1.2.0', '1.0.0', fakeFetch({ 'update-manifest.json': bytes }), PUB)).rejects.toThrow(/HTTP 404/)
-    await expect(fetchSignedManifest('1.2.0', '1.0.0', fakeFetch(files, 'evil.example'), PUB)).rejects.toThrow(/unexpected address/)
-    await expect(fetchSignedManifest('1.3.0', '1.0.0', fakeFetch(files), PUB)).rejects.toThrow(/not 1\.3\.0/)
-    await expect(fetchSignedManifest('1.2.0', '1.2.0', fakeFetch(files), PUB)).rejects.toThrow(/not newer/)
+    await expect(fetchSignedManifest('1.2.0', '1.0.0', fakeFetch({ 'update-manifest.json': bytes }), PUB, 'win32')).rejects.toThrow(/HTTP 404/)
+    await expect(fetchSignedManifest('1.2.0', '1.0.0', fakeFetch(files, 'evil.example'), PUB, 'win32')).rejects.toThrow(/unexpected address/)
+    await expect(fetchSignedManifest('1.3.0', '1.0.0', fakeFetch(files), PUB, 'win32')).rejects.toThrow(/not 1\.3\.0/)
+    await expect(fetchSignedManifest('1.2.0', '1.2.0', fakeFetch(files), PUB, 'win32')).rejects.toThrow(/not newer/)
     const big = { ...files, 'update-manifest.json': Buffer.alloc(20_000, 32) }
-    await expect(fetchSignedManifest('1.2.0', '1.0.0', fakeFetch(big), PUB)).rejects.toThrow(/too large/)
-    await expect(fetchSignedManifest('1.2.0/../x', '1.0.0', fakeFetch(files), PUB)).rejects.toThrow(/Not a release version/)
+    await expect(fetchSignedManifest('1.2.0', '1.0.0', fakeFetch(big), PUB, 'win32')).rejects.toThrow(/too large/)
+    await expect(fetchSignedManifest('1.2.0/../x', '1.0.0', fakeFetch(files), PUB, 'win32')).rejects.toThrow(/Not a release version/)
   })
 })

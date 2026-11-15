@@ -127,6 +127,7 @@ Get the latest version from **[Releases](https://github.com/006mi4/Clavium/relea
 | `Clavium-Setup-x.y.z.exe` | Installer (per user, no admin rights needed), start menu + desktop shortcut |
 | `Clavium-x.y.z-portable.exe` | Single exe, no installation |
 | `Clavium-x.y.z-mac.dmg` | macOS 11 or later, Apple silicon and Intel in one file |
+| `Clavium-x.y.z-mac.zip` | The same app as a zip. Installed copies download it to update themselves |
 | `SHA256SUMS.txt`, `SHA256SUMS-mac.txt` | Checksums of the files above |
 
 **Windows SmartScreen:** Clavium is open source and its releases are not signed with a paid
@@ -159,7 +160,10 @@ and twice a day (can be switched off), but it never downloads or installs anythi
 
 An update is installed only if it is signed with the Clavium release key (Ed25519) that is built into the
 app, is strictly newer than the installed version, and matches the signed size and SHA-512 checksum.
-The portable version and the macOS version can't update themselves; download the new file instead. Details in
+This works for the installed Windows version and, from 0.1.8 on, for the macOS version in the
+*Applications* folder. The portable Windows version can't update itself, and neither can a macOS copy that
+is not signed with an Apple Developer ID (for example one built from source); download the new file instead.
+Details in
 [SECURITY.md](SECURITY.md#updates).
 
 Every release is built from the tagged source by [`.github/workflows/release.yml`](.github/workflows/release.yml)

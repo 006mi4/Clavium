@@ -156,9 +156,11 @@ It contains no secrets; the token is passed by the AI client via the `CLAVIUM_MC
 
 ### Updates
 
-The installed (NSIS) build for Windows can update itself from the project's GitHub releases. The macOS
-build does not update itself: in-place updates there need an app signed with an Apple Developer ID, so new
-versions are installed from the downloaded disk image.
+The installed (NSIS) build for Windows and the macOS app can update themselves from the project's GitHub
+releases. Each system has its own signed manifest (`update-manifest.json` for the Windows installer,
+`update-manifest-mac.json` for the zipped macOS app), and a manifest is only accepted for the system it was
+made for. On macOS the system updater additionally refuses any app that is not signed by the same Apple
+Developer ID as the running one, so a copy without such a signature does not offer updates at all.
 
 - Each release contains `update-manifest.json` (version, installer file name, size, SHA-512) and
   `update-manifest.json.sig`, an Ed25519 signature over the exact manifest bytes.
