@@ -16,7 +16,7 @@ import { TransferHost } from './components/Transfers'
 import { StatusDot, TerminalView, type ConnState } from './components/TerminalView'
 import { HostPickerSheet, WorkspaceNameSheet, WorkspacesPage } from './components/Workspaces'
 import { IconButton, PaneContext, useConfirm, useMenu, useToast, type IconType, type MenuItem } from './ui'
-import { keys as shortcutLabel, mod } from './platform'
+import { isMac, keys as shortcutLabel, mod } from './platform'
 
 type Page = 'hosts' | 'workspaces' | 'keys' | 'known' | 'ai' | 'activity' | 'settings'
 
@@ -51,6 +51,8 @@ interface Tab {
 const FULL: Rect = { x: 0, y: 0, w: 1, h: 1 }
 /** what a tab that is dragged out of the sidebar carries */
 const TAB_DRAG = 'application/x-clavium-tab'
+/** room the caption buttons of Windows take from the toolbar in the top right corner (see .toolbar in styles.css) */
+const CAPTION_BUTTONS = isMac ? 0 : 128
 const pct = (n: number): string => `${(n * 100).toFixed(4)}%`
 let nextId = 0
 
@@ -682,7 +684,7 @@ export function App() {
           // only the pane in the top right corner has to keep clear of the window buttons
           const corner = rect.y < 0.001 && rect.x + rect.w > 0.999
           // in pixels: below these widths the toolbar drops the words on its buttons, then some buttons
-          const width = rect.w * mainWidth
+          const width = rect.w * mainWidth - (corner ? CAPTION_BUTTONS : 0)
           const tight = split && mainWidth > 0 && width < 460
           const tiny = split && mainWidth > 0 && width < 230
           // the other terminals of the tab, while what is typed goes to all of them
