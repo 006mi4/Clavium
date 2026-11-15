@@ -64,6 +64,16 @@ describe('suggestions', () => {
     expect(labels('docker logs -')).toEqual(['-f', '--tail', '-t', '--since'])
   })
 
+  it('knows the long spellings of options, after the short ones', () => {
+    expect(labels('ls --al')).toEqual(['--all', '--almost-all'])
+    expect(labels('ls -').slice(0, 2)).toEqual(['-l', '-a'])
+    expect(labels('grep --ign')).toEqual(['--ignore-case'])
+    expect(labels('rm --he')).toEqual(['--help'])
+    // an option that was already known keeps its place and its text
+    const color = suggest(parseLine('grep --col'), data(), '/srv')
+    expect(color.map((s) => [s.label, s.detail])).toEqual([['--color', 'Highlight the hits']])
+  })
+
   it('completes paths against the folder of the shell', () => {
     const d = data({ dir: (path) => (path === '/srv/./' ? ['www/', 'readme.txt', '.env', 'my file.txt'] : path === '/srv/www/' ? ['index.html'] : undefined) })
     expect(completionNeeds(parseLine('cat re'), '/srv')).toEqual([{ kind: 'dir', path: '/srv/./' }])
