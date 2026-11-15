@@ -64,6 +64,27 @@ export function splitPane<T>(l: Layout<T>, target: T, dir: SplitDir, added: T): 
   return { ...l, a: splitPane(l.a, target, dir, added), b: splitPane(l.b, target, dir, added) }
 }
 
+/** Put a whole arrangement next to `target`: a tab that is moved into another one keeps its own splits. */
+export function insertBeside<T>(l: Layout<T>, target: T, dir: SplitDir, added: Layout<T>): Layout<T> {
+  if ('pane' in l) return l.pane === target ? { dir, ratio: 0.5, a: l, b: added } : l
+  return { ...l, a: insertBeside(l.a, target, dir, added), b: insertBeside(l.b, target, dir, added) }
+}
+
+/**
+ * Where something dropped at a point (fractions of the area of the tab) lands: next to the pane
+ * under the pointer, below it when the pointer is in its lower part, to the right of it otherwise.
+ */
+export function dropTarget<T>(l: Layout<T>, x: number, y: number): { pane: T; dir: SplitDir; rect: Rect } | null {
+  for (const { pane, rect } of paneRects(l)) {
+    if (x < rect.x || x > rect.x + rect.w || y < rect.y || y > rect.y + rect.h) continue
+    const below = (y - rect.y) / rect.h > 0.6
+    return below
+      ? { pane, dir: 'col', rect: { ...rect, y: rect.y + rect.h / 2, h: rect.h / 2 } }
+      : { pane, dir: 'row', rect: { ...rect, x: rect.x + rect.w / 2, w: rect.w / 2 } }
+  }
+  return null
+}
+
 /** The layout without `target`; null when it was the last pane. */
 export function removePane<T>(l: Layout<T>, target: T): Layout<T> | null {
   if ('pane' in l) return l.pane === target ? null : l

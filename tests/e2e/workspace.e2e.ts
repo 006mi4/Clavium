@@ -347,4 +347,54 @@ describe('workspaces and terminal suggestions', () => {
     await panes().getByRole('button', { name: 'Close Session' }).click()
     await expect.poll(() => panes().count()).toBe(0)
   })
+
+  it('moves a tab into another one by dragging it there, or from the menu, without connecting again', async () => {
+    const tabItem = (name: string): Locator => sidebar().locator('.side-item', { hasText: name })
+    for (const name of ['web-01', 'db-01']) {
+      await sidebar().getByRole('button', { name: 'Hosts', exact: true }).click()
+      await page.locator('.host-row', { hasText: name }).click()
+      await page.locator('.view:not(.hidden)').getByRole('button', { name: 'Connect' }).click()
+      await terminal(panes(), 'Welcome to the Clavium test server').waitFor()
+    }
+    await page.keyboard.type('here is db')
+    await page.keyboard.press('Enter')
+    await terminal(panes(), 'echo:here is db').waitFor()
+    const logins = srv.logins
+
+    // db-01 is the visible tab; web-01 is dragged from the sidebar into its lower part
+    const area = (await page.locator('.main').boundingBox())!
+    await tabItem('web-01').hover()
+    await page.mouse.down()
+    await page.mouse.move(area.x + area.width * 0.5, area.y + area.height * 0.5, { steps: 6 })
+    await page.mouse.move(area.x + area.width * 0.5, area.y + area.height * 0.85, { steps: 6 })
+    await page.locator('.tab-drop-mark').waitFor()
+    const mark = (await page.locator('.tab-drop-mark').boundingBox())!
+    expect(Math.round(mark.y - area.y)).toBe(Math.round(area.height / 2))
+    await page.mouse.up()
+    await expect.poll(() => panes().count()).toBe(2)
+    expect(await tabItem('db-01 + web-01').count()).toBe(1)
+    expect(await page.getByRole('separator', { name: 'Resize the panes above and below' }).count()).toBe(1)
+    // both terminals are the ones that were open: nothing was typed away, nobody logged in again
+    await terminal(panes(), 'echo:here is db').waitFor()
+    expect(srv.logins).toBe(logins)
+    expect(await page.locator('.tab-drop').count()).toBe(0)
+
+    // apart again, and back together from the menu of the pane
+    await panes().filter({ hasText: 'echo:here is db' }).getByRole('button', { name: 'Split View and Workspace' }).click()
+    await page.locator('.menu button', { hasText: 'Move to a Tab of Its Own' }).click()
+    await expect.poll(() => panes().count()).toBe(1)
+    // the pane that was taken out is the visible tab now; the other tab comes to it
+    await terminal(panes(), 'echo:here is db').waitFor()
+    await panes().getByRole('button', { name: 'Split View and Workspace' }).click()
+    await page.locator('.menu button', { hasText: 'Move “web-01” Here' }).click()
+    await expect.poll(() => panes().count()).toBe(2)
+    expect(await tabItem('db-01 + web-01').count()).toBe(1)
+    expect(await page.getByRole('separator', { name: 'Resize the panes left and right' }).count()).toBe(1)
+    await terminal(panes(), 'echo:here is db').waitFor()
+    expect(srv.logins).toBe(logins)
+
+    await tabItem('db-01 + web-01').hover()
+    await sidebar().getByRole('button', { name: 'Close db-01 + web-01', exact: true }).click()
+    await expect.poll(() => panes().count()).toBe(0)
+  })
 })

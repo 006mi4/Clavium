@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { ArrowDownCircle, ArrowLeftRight, Columns2, Container, ExternalLink, FolderOpen, History, Keyboard, KeyRound, Layers, Lock, PanelsTopLeft, Rows2, Save, Server, Settings, ShieldCheck, Sparkles, SquareTerminal, X } from 'lucide-react'
 import type { ActiveForward, EditorFileInfo, EditorRequest, HostSummary, PaneKind, SavedWorkspace, SessionSnapshot, SshKeySummary, TerminalTarget, UpdateState, VaultState, WorkspaceTab } from '@shared/types'
-import { MAX_PANES, dividers, filterLayout, mapLayout, neighbor, paneRects, panes, removePane, setRatio, splitPane, type Divider, type Layout, type Rect, type SplitDir } from '@shared/layout'
+import { MAX_PANES, dividers, dropTarget, filterLayout, insertBeside, mapLayout, neighbor, paneRects, panes, removePane, setRatio, splitPane, type Divider, type Layout, type Rect, type SplitDir } from '@shared/layout'
 import { api, on, type UiSettings } from './api'
 import { DockerView } from './components/DockerView'
 import { FilesView } from './components/FilesView'
@@ -49,6 +49,8 @@ interface Tab {
 }
 
 const FULL: Rect = { x: 0, y: 0, w: 1, h: 1 }
+/** what a tab that is dragged out of the sidebar carries */
+const TAB_DRAG = 'application/x-clavium-tab'
 const pct = (n: number): string => `${(n * 100).toFixed(4)}%`
 let nextId = 0
 
@@ -80,6 +82,8 @@ export function App() {
   const mainRef = useRef<HTMLElement>(null)
   /** a host is chosen for a new pane next to this session */
   const [picking, setPicking] = useState<{ beside: string; dir: SplitDir } | null>(null)
+  /** a tab is being dragged out of the sidebar; `at`: where it would land in the visible tab */
+  const [dragTab, setDragTab] = useState<{ id: string; at: { pane: string; dir: SplitDir; rect: Rect } | null } | null>(null)
   /** the tab that is being saved under a name */
   const [naming, setNaming] = useState<string | null>(null)
   const [workspaceSignal, setWorkspaceSignal] = useState(0)
@@ -289,6 +293,31 @@ export function App() {
       return [...list.map((t) => (t.id === tabId ? { ...t, layout, focus: rest[0], zoomed: t.zoomed && rest.length > 1 } : t)), own]
     })
   }
+  const sessionsOf = (t: Tab): Session[] =>
+    panes(t.layout)
+      .map((id) => sessions.find((x) => x.id === id))
+      .filter((x): x is Session => !!x)
+  /** What a tab is called in the sidebar. */
+  const tabLabel = (t: Tab): string => {
+    const list = sessionsOf(t)
+    const first = list[0]
+    if (t.name || !first) return t.name ?? ''
+    if (list.length > 1) return [...new Set(list.map((x) => x.host.name))].join(' + ')
+    return first.target ? `${first.target.name} · ${first.host.name}` : first.host.name
+  }
+  /** Move all connections of one tab into another, next to one of its panes. Nothing is connected again. */
+  const mergeTabs = (fromId: string, intoId: string, beside: string, dir: SplitDir): void => {
+    const from = tabs.find((t) => t.id === fromId)
+    const into = tabs.find((t) => t.id === intoId)
+    if (!from || !into || from === into || !panes(into.layout).includes(beside)) return
+    if (panes(from.layout).length + panes(into.layout).length > MAX_PANES) {
+      toast.error(new Error(`A tab holds up to ${MAX_PANES} connections.`))
+      return
+    }
+    setTabs((list) => list.filter((t) => t.id !== fromId).map((t) => (t.id === intoId ? { ...t, layout: insertBeside(t.layout, beside, dir, from.layout), focus: from.focus, zoomed: false } : t)))
+    setActive(intoId)
+    focusInto(from.focus, true)
+  }
   const saveWorkspace = async (tabId: string, name: string, asNew: boolean): Promise<void> => {
     const tab = tabs.find((t) => t.id === tabId)
     const described = tab && describe(tab)
@@ -312,6 +341,12 @@ export function App() {
     items.push('separator')
     items.push({ label: 'Another Host to the Right…', icon: Server, disabled: full, onSelect: () => setPicking({ beside: s.id, dir: 'row' }) })
     items.push({ label: 'Another Host Below…', icon: Server, disabled: full, onSelect: () => setPicking({ beside: s.id, dir: 'col' }) })
+    // the same as dragging a tab out of the sidebar onto this pane, for the keyboard
+    const others = tabs.filter((t) => t.id !== tab.id).slice(0, 6)
+    if (others.length) items.push('separator')
+    for (const other of others) {
+      items.push({ label: `Move “${tabLabel(other)}” Here`, icon: PanelsTopLeft, disabled: panes(other.layout).length + panes(tab.layout).length > MAX_PANES, onSelect: () => mergeTabs(other.id, tab.id, s.id, 'row') })
+    }
     if (panes(tab.layout).length > 1) {
       items.push('separator')
       items.push({ label: 'Move to a Tab of Its Own', icon: ExternalLink, onSelect: () => detach(tab.id, s.id) })
@@ -474,21 +509,38 @@ export function App() {
             <>
               <div className="side-title">Open</div>
               {tabs.map((t) => {
-                const list = panes(t.layout)
-                  .map((id) => sessions.find((x) => x.id === id))
-                  .filter((x): x is Session => !!x)
+                const list = sessionsOf(t)
                 const first = list[0]
                 if (!first) return null
                 const several = list.length > 1
-                const label = t.name ?? (several ? [...new Set(list.map((x) => x.host.name))].join(' + ') : first.target ? `${first.target.name} · ${first.host.name}` : first.host.name)
+                const label = tabLabel(t)
                 return (
                   <div
                     key={t.id}
                     role="button"
                     tabIndex={0}
-                    className={`side-item ${active === t.id ? 'active' : ''}`}
+                    className={`side-item ${active === t.id ? 'active' : ''} ${dragTab && dragTab.id !== t.id ? 'drop-ready' : ''}`}
                     aria-current={active === t.id ? 'page' : undefined}
-                    title={list.map((x) => `${kindLabel(x)}: ${x.host.username}@${x.host.hostname}`).join('\n')}
+                    title={list.map((x) => `${kindLabel(x)}: ${x.host.username}@${x.host.hostname}`).join('\n') + (tabs.length > 1 ? '\nDrag onto another tab to show both side by side' : '')}
+                    draggable={tabs.length > 1}
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData(TAB_DRAG, t.id)
+                      e.dataTransfer.effectAllowed = 'move'
+                      setDragTab({ id: t.id, at: null })
+                    }}
+                    onDragEnd={() => setDragTab(null)}
+                    // another tab dropped on this one joins it, to the right of the pane that has the keyboard
+                    onDragOver={(e) => {
+                      if (!dragTab || dragTab.id === t.id) return
+                      e.preventDefault()
+                      e.dataTransfer.dropEffect = 'move'
+                    }}
+                    onDrop={(e) => {
+                      if (!dragTab || dragTab.id === t.id) return
+                      e.preventDefault()
+                      mergeTabs(dragTab.id, t.id, t.focus, 'row')
+                      setDragTab(null)
+                    }}
                     onClick={() => setActive(t.id)}
                     onKeyDown={(e) => e.key === 'Enter' && e.target === e.currentTarget && setActive(t.id)}
                     onAuxClick={(e) => e.button === 1 && void closeTab(t.id)}
@@ -665,6 +717,37 @@ export function App() {
             </div>
           )
         })}
+        {/* While a tab is dragged, the visible tab takes it: the marked half shows where it lands. */}
+        {dragTab &&
+          tabs
+            .filter((t) => t.id === active && t.id !== dragTab.id && !t.zoomed)
+            .map((t) => {
+              const at = (e: React.DragEvent): { pane: string; dir: SplitDir; rect: Rect } | null => {
+                const box = e.currentTarget.getBoundingClientRect()
+                return dropTarget(t.layout, (e.clientX - box.left) / box.width, (e.clientY - box.top) / box.height)
+              }
+              return (
+                <div
+                  key="tab-drop"
+                  className="tab-drop"
+                  onDragOver={(e) => {
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = 'move'
+                    const next = at(e)
+                    if (next?.pane !== dragTab.at?.pane || next?.dir !== dragTab.at?.dir) setDragTab({ id: dragTab.id, at: next })
+                  }}
+                  onDragLeave={() => dragTab.at && setDragTab({ id: dragTab.id, at: null })}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    const target = at(e)
+                    if (target) mergeTabs(dragTab.id, t.id, target.pane, target.dir)
+                    setDragTab(null)
+                  }}
+                >
+                  {dragTab.at && <div className="tab-drop-mark" style={{ left: pct(dragTab.at.rect.x), top: pct(dragTab.at.rect.y), width: pct(dragTab.at.rect.w), height: pct(dragTab.at.rect.h) }} />}
+                </div>
+              )
+            })}
         {tabs
           .filter((t) => t.id === active && !t.zoomed)
           .flatMap((t) => dividers(t.layout).map((d) => <PaneDivider key={`${t.id}:${d.path}`} divider={d} area={mainRef} onChange={(ratio) => patchTab(t.id, (cur) => ({ layout: setRatio(cur.layout, d.path, ratio) }))} />))}
