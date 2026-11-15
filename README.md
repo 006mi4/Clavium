@@ -10,7 +10,17 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/006mi4/Clavium/releases/latest"><b>Download for Windows and macOS</b></a> ·
+  <a href="https://github.com/006mi4/Clavium/releases/latest/download/Clavium-Setup.exe"><img src="docs/buttons/download-windows.svg" width="264" height="72" alt="Download Clavium for Windows" /></a>
+  &nbsp;&nbsp;
+  <a href="https://github.com/006mi4/Clavium/releases/latest/download/Clavium-mac.dmg"><img src="docs/buttons/download-macos.svg" width="264" height="72" alt="Download Clavium for macOS" /></a>
+</p>
+
+<p align="center">
+  <sub>Windows 10 and 11 (installer) · macOS 11 or later (Apple silicon and Intel) ·
+  <a href="https://github.com/006mi4/Clavium/releases/latest">all files and older versions</a></sub>
+</p>
+
+<p align="center">
   <a href="#ai-access-mcp">AI access setup</a> ·
   <a href="SECURITY.md">Security</a> ·
   <a href="#deutsch">Deutsch</a>
@@ -129,6 +139,7 @@ Get the latest version from **[Releases](https://github.com/006mi4/Clavium/relea
 | `Clavium-x.y.z-mac.dmg` | macOS 11 or later, Apple silicon and Intel in one file |
 | `Clavium-x.y.z-mac.zip` | The same app as a zip. Installed copies download it to update themselves |
 | `SHA256SUMS.txt`, `SHA256SUMS-mac.txt` | Checksums of the files above |
+| `Clavium-Setup.exe`, `Clavium-mac.dmg` | The installer and the disk image again under names without a version, for the download buttons above |
 
 **Windows SmartScreen:** Clavium is open source and its releases are not signed with a paid
 code-signing certificate, so Windows may show *"Windows protected your PC"* on the first start.

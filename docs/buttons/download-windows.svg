@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="264" height="72" viewBox="0 0 264 72" role="img" aria-label="Download Clavium for Windows">
+  <title>Download Clavium for Windows</title>
+  <defs>
+    <linearGradient id="fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1960d2"/>
+      <stop offset="1" stop-color="#0a4fbd"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="3" width="260" height="66" rx="17" fill="#062f73" opacity="0.28"/>
+  <rect x="2" y="1" width="260" height="66" rx="17" fill="url(#fill)"/>
+  <rect x="3" y="2" width="258" height="22" rx="16" fill="url(#shine)"/>
+  <rect x="2.5" y="1.5" width="259" height="65" rx="16.5" fill="none" stroke="#ffffff" stroke-opacity="0.18"/>
+  <g transform="translate(24 17)" fill="#ffffff">
+    <rect x="0" y="0" width="15" height="15" rx="2.5"/>
+    <rect x="18" y="0" width="15" height="15" rx="2.5"/>
+    <rect x="0" y="18" width="15" height="15" rx="2.5"/>
+    <rect x="18" y="18" width="15" height="15" rx="2.5"/>
+  </g>
+  <g fill="#ffffff" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI', system-ui, Helvetica, Arial, sans-serif">
+    <text x="74" y="29" font-size="13" font-weight="500">Download for</text>
+    <text x="74" y="52" font-size="22" font-weight="700" letter-spacing="0.1">Windows</text>
+  </g>
+  <g transform="translate(228 34)" fill="none" stroke="#ffffff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M0 -9v15M-6.5 0.5 0 7l6.5-6.5M-8 12h16"/>
+  </g>
+</svg>
