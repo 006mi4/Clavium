@@ -1,7 +1,7 @@
 {
   "name": "clavium",
   "productName": "Clavium",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Open-source SSH, SFTP and FTP(S) client with an encrypted vault and a built-in, permission-gated MCP server for Claude and Codex.",
   "license": "MIT",
   "author": "Clavium contributors",
