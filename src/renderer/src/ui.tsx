@@ -119,7 +119,7 @@ export function Sheet(props: {
   children?: ReactNode
   footer?: ReactNode
   onClose?: () => void
-  size?: 'narrow' | 'regular' | 'wide'
+  size?: 'narrow' | 'regular' | 'wide' | 'xwide'
 }) {
   useEffect(() => {
     if (!props.onClose) return

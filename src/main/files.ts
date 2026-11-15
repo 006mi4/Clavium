@@ -1,19 +1,21 @@
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { extname, join, resolve, sep } from 'node:path'
-import { DEFAULT_TRANSFER_SETTINGS, type ChmodOptions, type FolderSize, type SearchResult, type TreeChange, type ClipboardCopyResult, type CopyResult, type ExistingRule, type HostRecord, type MovePair, type MoveResult, type QueueAction, type RemoteEntry, type TransferSettings, type TransferSnapshot } from '@shared/types'
+import { extname, isAbsolute, join, resolve, sep } from 'node:path'
+import { DEFAULT_TRANSFER_SETTINGS, type ChmodOptions, type FolderSize, type SearchResult, type TreeChange, type ClipboardCopyResult, type CopyResult, type ExistingRule, type HostRecord, type MovePair, type MoveResult, type QueueAction, type RemoteEntry, type SyncAction, type SyncComparison, type SyncOptions, type SyncResult, type TransferSettings, type TransferSnapshot, type WatchStatus } from '@shared/types'
 import { randomId } from './core/crypto'
 import { driveRoots, watchForDrop } from './core/dropwatch'
 import { safeLocalName, TransferQueue } from './core/queue'
+import { FolderWatch } from './core/keepup'
+import { applySync, compareTrees, deleteCount } from './core/sync'
 import { chmodTree, chownTree, folderSize, searchTree } from './core/remotetools'
 import { copyEntries, measure, moveEntries } from './core/transfer'
 import type { Prompter } from './core/prompter'
 import { openRemoteFs, type RemoteFs } from './core/remotefs'
 import type { Vault } from './core/vault'
 
-type Send = (channel: 'files:queue' | 'files:changed' | 'files:closed' | 'files:searchHits', ...args: unknown[]) => void
+type Send = (channel: 'files:queue' | 'files:changed' | 'files:closed' | 'files:searchHits' | 'files:syncProgress' | 'files:watch', ...args: unknown[]) => void
 
 export { safeLocalName }
 
@@ -48,6 +50,8 @@ export interface Desktop {
   clearClipboard(): void
   /** Folders that are watched to find out where dragged items were dropped. Default: all drives. */
   dropRoots?(): string[]
+  /** Move a file or folder to the trash of the system. Without it, local files cannot be deleted. */
+  trash?(path: string): Promise<void>
 }
 
 const NO_DESKTOP: Desktop = {
@@ -100,6 +104,7 @@ export class FileManager {
     this.sessions.set(id, fs)
     fs.onClose(() => {
       if (!this.sessions.delete(id)) return
+      this.sessionGone(id)
       this.queue.sessionClosed(id)
       this.send('files:closed', id)
     })
@@ -115,6 +120,7 @@ export class FileManager {
   close(id: string): void {
     const fs = this.sessions.get(id)
     this.sessions.delete(id)
+    this.sessionGone(id)
     this.queue.sessionClosed(id)
     fs?.close()
   }
@@ -181,6 +187,121 @@ export class FileManager {
 
   chownTree(id: string, entries: RemoteEntry[], owner: { uid?: number; gid?: number }, recursive: boolean, token: string): Promise<TreeChange> {
     return this.background(id, token, (fs, signal) => chownTree(fs, entries, owner, recursive, signal))
+  }
+
+  // ------------------------------------------------------- synchronisation ----
+
+  /** Comparisons the interface may still act on. */
+  private plans = new Map<string, SyncComparison & { sessionId: string }>()
+  private watches = new Map<string, FolderWatch>()
+
+  private sessionGone(id: string): void {
+    for (const [planId, plan] of this.plans) if (plan.sessionId === id) this.plans.delete(planId)
+    let stopped = false
+    for (const [watchId, w] of this.watches) {
+      if (w.status.sessionId !== id) continue
+      w.stop()
+      this.watches.delete(watchId)
+      stopped = true
+    }
+    if (stopped) this.watchesChanged()
+  }
+
+  private async localFolder(path: string): Promise<string> {
+    if (!isAbsolute(path)) throw new Error('The local folder must be given with its full path')
+    const st = await stat(path).catch(() => null)
+    if (!st?.isDirectory()) throw new Error('The local folder does not exist')
+    return resolve(path)
+  }
+
+  /** Compare a local folder with a folder on the server. Changes nothing. */
+  async syncCompare(id: string, remoteDir: string, localDir: string, options: SyncOptions, token: string): Promise<SyncComparison> {
+    const local = await this.localFolder(localDir)
+    const found = await this.background(id, token, (fs, signal) =>
+      compareTrees(fs, local, remoteDir, options, signal, (scanned) => this.quietly(() => this.send('files:syncProgress', { token, scanned })))
+    )
+    const plan = { ...found, id: randomId(), sessionId: id }
+    this.plans.set(plan.id, plan)
+    // Old comparisons are of no use once a newer one exists.
+    for (const old of [...this.plans.keys()].slice(0, -4)) this.plans.delete(old)
+    const { sessionId: _session, ...comparison } = plan
+    return comparison
+  }
+
+  /**
+   * Carry out the chosen actions of a comparison. `confirmedDeletes` is the number of deletions
+   * the user has seen and agreed to; anything else is refused.
+   */
+  async syncApply(planId: string, chosen: { rel: string; action: SyncAction }[], confirmedDeletes: number): Promise<SyncResult> {
+    const plan = this.plans.get(planId)
+    if (!plan) throw new Error('This comparison is no longer valid. Compare again')
+    if (deleteCount(chosen) !== confirmedDeletes) throw new Error('The deletions were not confirmed')
+    const fs = this.get(plan.sessionId)
+    // One comparison is applied once: afterwards the folders look different.
+    this.plans.delete(planId)
+    try {
+      return await applySync(
+        {
+          fs,
+          transfer: (items) => this.queue.pairs(plan.sessionId, fs, items, { preserve: true }),
+          trash: (path) => {
+            if (!this.desktop.trash) throw new Error('Deleting local files is not available here')
+            return this.desktop.trash(path)
+          }
+        },
+        plan,
+        chosen
+      )
+    } finally {
+      this.quietly(() => this.send('files:changed', plan.sessionId))
+    }
+  }
+
+  private watchesChanged(): void {
+    this.quietly(() => this.send('files:watch', this.watchList()))
+  }
+
+  watchList(): WatchStatus[] {
+    return [...this.watches.values()].map((w) => ({ ...w.status }))
+  }
+
+  /** Keep a folder on the server up to date: upload whatever changes in the local folder from now on. */
+  async watchStart(id: string, remoteDir: string, localDir: string): Promise<WatchStatus> {
+    const fs = this.get(id)
+    const local = await this.localFolder(localDir)
+    if ((await fs.stat(remoteDir)).type !== 'dir') throw new Error('The folder on the server does not exist')
+    for (const w of this.watches.values()) {
+      if (w.status.sessionId === id && canonical(w.status.localDir) === canonical(local)) throw new Error('This folder is already kept up to date')
+    }
+    const watchId = randomId()
+    const w = new FolderWatch(
+      watchId,
+      id,
+      local,
+      remoteDir,
+      {
+        fs,
+        transfer: (items) => this.queue.pairs(id, fs, items, { preserve: true }),
+        uploadFolder: (path, parent) => this.queue.upload(id, fs, [path], parent, 'overwrite'),
+        changed: () => this.watchesChanged()
+      },
+      () => {
+        this.watches.delete(watchId)
+        this.watchesChanged()
+      }
+    )
+    w.start()
+    this.watches.set(watchId, w)
+    this.watchesChanged()
+    return { ...w.status }
+  }
+
+  watchStop(watchId: string): void {
+    const w = this.watches.get(watchId)
+    if (!w) return
+    w.stop()
+    this.watches.delete(watchId)
+    this.watchesChanged()
   }
 
   // ------------------------------------------------- move, copy, conflicts ----

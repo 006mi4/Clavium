@@ -31,9 +31,10 @@ Not part of this roadmap: a local file pane, and importing sites from FileZilla,
 
 ## Package C: synchronisation
 
-- [ ] Compare a local folder with a server folder, with a preview of the differences
-- [ ] Synchronise one way, both ways, and as a mirror
-- [ ] Keep a folder up to date (watch the local folder and upload)
+- [x] Compare a local folder with a server folder, with a preview of the differences
+- [x] Synchronise one way, both ways, and as a mirror
+- [x] Keep a folder up to date (watch the local folder and upload)
+- [x] Compare by size and modification time, with the time zone and the coarse times of FTP taken into account
 
 ## Package D: connections and editing
 
@@ -55,9 +56,44 @@ Not part of this roadmap: a local file pane, and importing sites from FileZilla,
 - [ ] Package B: changing the owner is tested against a server that writes the request down
   instead of carrying it out (that needs root).
 
+- [ ] Package C: a server without `MFMT` gives an uploaded file the time of the upload. The next
+  comparison by time then sees it as newer on the server. Uploading one way leaves it alone, both
+  ways downloads it once more, a mirror uploads it again. "Compare size only" avoids that.
+- [ ] Package C: the watch for "keep up to date" ends with the connection and is not started
+  again by itself. Package D (reconnect) should bring it back.
+- [ ] Package C: finding the shift of the server clock is tested against the FTP test server on
+  this Mac (one time zone). The times of DOS-style listings are covered by a unit test only.
+
 ## Status
 
-Packages A and B are finished. Packages C and D are open; C is next.
+Packages A, B and C are finished. Package D is open.
+
+### How package C is built
+
+- `src/main/core/sync.ts`: `compareTrees` walks both folders and lists only what differs
+  (`onlyLocal`, `onlyRemote`, `localNewer`, `remoteNewer`, `different`). Links are never followed
+  and never listed; names of the server that cannot exist on this computer, and names that differ
+  only in upper and lower case, are reported as left alone. `applySync` carries out the chosen
+  actions: folders, then transfers through the queue, then deletions. Deletions on the server are
+  never recursive (a folder that got a new file after the comparison stays), local deletions go
+  to the trash, and nothing is deleted when transfers were cancelled.
+- `src/shared/sync.ts`: which actions a difference allows and what each way of synchronising
+  proposes. Only the mirror modes propose deleting.
+- The main process keeps the comparison and hands the interface an id. `files:syncApply` takes
+  that id, the chosen actions and the number of deletions the user has confirmed, and refuses
+  anything that is not part of the comparison. A comparison can be applied once.
+- Times: 2 seconds of tolerance; plain FTP listings (`LIST`) are now read (`listTime` in
+  `remotefs.ts`) and carry `timePrecision` (`minute` or `day`), which widens the tolerance. Such
+  listings name no time zone, so `detectOffsetMinutes` finds the shift of the server clock from
+  files of equal size (at least three, and most of them must agree).
+- `TransferQueue.pairs` transfers exact file pairs and reports how each ended; it keeps
+  modification times whatever the settings say, because the next comparison depends on them.
+- `src/main/core/keepup.ts`: `FolderWatch` watches the local folder (`fs.watch`, recursive),
+  collects changes for 400 ms and uploads them. It never deletes on the server and skips files
+  that are already the same there. Status goes out as the `files:watch` event.
+- Interface: `src/renderer/src/components/SyncSheet.tsx` (the sheet and the status bar with the
+  stop button), opened from the toolbar or the context menu of the file view.
+- Tests: `tests/sync.test.ts` and one scenario in `tests/e2e/app.e2e.ts`.
 
 ### How package B is built
 

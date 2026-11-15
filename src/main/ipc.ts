@@ -80,6 +80,7 @@ const entrySchema = z.object({
   type: z.enum(['file', 'dir', 'link', 'other']),
   size: z.number(),
   modifiedAt: z.number(),
+  timePrecision: z.enum(['minute', 'day']).optional(),
   permissions: z.string().max(20).optional(),
   uid: z.number().int().min(0).optional(),
   gid: z.number().int().min(0).optional(),
@@ -359,12 +360,12 @@ export function registerIpc(ctx: IpcContext): void {
   })
   const localPaths = z.array(z.string().min(1).max(4096)).min(1).max(1000)
   const entryList = z.array(entrySchema).min(1).max(1000)
-  handle('files:pickLocal', z.tuple([z.enum(['files', 'folder'])]), async (kind) => {
+  handle('files:pickLocal', z.tuple([z.enum(['files', 'folder', 'sync'])]), async (kind) => {
     const win = ctx.window()
     if (!win) return []
     const r = await dialog.showOpenDialog(win, {
-      title: kind === 'folder' ? 'Upload folder' : 'Upload files',
-      properties: kind === 'folder' ? ['openDirectory'] : ['openFile', 'multiSelections']
+      title: kind === 'sync' ? 'Choose local folder' : kind === 'folder' ? 'Upload folder' : 'Upload files',
+      properties: kind === 'sync' ? ['openDirectory', 'createDirectory'] : kind === 'folder' ? ['openDirectory'] : ['openFile', 'multiSelections']
     })
     return r.canceled ? [] : r.filePaths
   })
@@ -408,6 +409,18 @@ export function registerIpc(ctx: IpcContext): void {
     ctx.files.search(fid, root, query, token)
   )
   handle('files:cancelWork', z.tuple([id]), (token) => ctx.files.cancelWork(token))
+  const localDir = z.string().min(1).max(4096)
+  const syncOptions = z.object({ compareBy: z.enum(['time', 'size']), offsetMinutes: z.number().int().min(-840).max(840).nullable() }).strict()
+  const syncChoice = z.object({ rel: z.string().min(1).max(4096), action: z.enum(['upload', 'download', 'deleteLocal', 'deleteRemote', 'skip']) }).strict()
+  handle('files:syncCompare', z.tuple([id, remotePath, localDir, syncOptions, id]), (fid, remote, local, options, token) =>
+    ctx.files.syncCompare(fid, remote, local, options, token)
+  )
+  handle('files:syncApply', z.tuple([id, z.array(syncChoice).max(50_000), z.number().int().min(0)]), (planId, chosen, deletes) =>
+    ctx.files.syncApply(planId, chosen, deletes)
+  )
+  handle('files:watchStart', z.tuple([id, remotePath, localDir]), (fid, remote, local) => ctx.files.watchStart(fid, remote, local))
+  handle('files:watchStop', z.tuple([id]), (watchId) => ctx.files.watchStop(watchId))
+  handle('files:watchList', z.tuple([]), () => ctx.files.watchList())
   handle('files:queueGet', z.tuple([]), () => ctx.files.transfers())
   handle(
     'files:queueAction',

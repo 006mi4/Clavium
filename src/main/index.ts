@@ -9,6 +9,7 @@ import {
   nativeTheme,
   powerMonitor,
   session,
+  shell,
   Tray,
   type MenuItemConstructorOptions,
   type WebContents
@@ -132,7 +133,8 @@ function runApp(): void {
     tempRoot: transferDir,
     readClipboardFiles,
     writeClipboardFiles,
-    clearClipboard: () => clipboard.clear()
+    clearClipboard: () => clipboard.clear(),
+    trash: (path) => shell.trashItem(path)
   }, () => settings.get())
   const docker = new DockerManager(vault, prompter, send)
   const forwards = new ForwardManager(vault, prompter, () => send('fwd:changed'))

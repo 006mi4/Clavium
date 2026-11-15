@@ -122,6 +122,8 @@ export interface RemoteEntry {
   type: 'file' | 'dir' | 'link' | 'other'
   size: number
   modifiedAt: number
+  /** How exact `modifiedAt` is, when it is coarser than a second (plain FTP listings). */
+  timePrecision?: 'minute' | 'day'
   permissions?: string
   /** Numeric owner and group (SFTP). */
   uid?: number
@@ -486,3 +488,83 @@ export type EditorRequest =
   | { op: 'open'; hostId: string; path: string }
   | { op: 'read'; hostId: string; path: string }
   | { op: 'edit'; hostId: string; path: string; edit: EditorEdit }
+
+// ------------------------------------------------------------ synchronisation ----
+
+/** How one item differs between the local folder and the folder on the server. */
+export type SyncKind = 'onlyLocal' | 'onlyRemote' | 'localNewer' | 'remoteNewer' | 'different'
+export type SyncAction = 'upload' | 'download' | 'deleteLocal' | 'deleteRemote' | 'skip'
+/** The mirror modes make the target equal to the source: they also replace newer files and delete. */
+export type SyncMode = 'upload' | 'download' | 'both' | 'mirrorUpload' | 'mirrorDownload'
+
+export interface SyncSide {
+  size: number
+  modifiedAt: number
+}
+
+export interface SyncItem {
+  /** Path below both folders, with forward slashes. */
+  rel: string
+  type: 'file' | 'dir'
+  kind: SyncKind
+  local?: SyncSide
+  remote?: SyncSide
+}
+
+export interface SyncOptions {
+  /** `time`: a file differs when size or modification time differ. `size`: only the size counts. */
+  compareBy: 'time' | 'size'
+  /** Minutes the clock of the server is ahead of real time; `null` finds it out from the files. */
+  offsetMinutes: number | null
+}
+
+export interface SyncComparison {
+  id: string
+  localDir: string
+  remoteDir: string
+  /** Only what differs. */
+  items: SyncItem[]
+  /** Files that are equal on both sides. */
+  same: number
+  /** Left alone, with the reason: links, names that cannot exist on this computer and the like. */
+  skipped: { rel: string; reason: string }[]
+  /** Folders that could not be read. Nothing inside them is touched. */
+  unreadable: string[]
+  /** The shift of the server clock that was taken into account. */
+  offsetMinutes: number
+  /** The shift was found out from the files, not given. */
+  offsetDetected: boolean
+  /** There were more differences than the list can hold. */
+  truncated: boolean
+  ended: 'done' | 'stopped'
+}
+
+export interface SyncProgress {
+  token: string
+  scanned: number
+}
+
+export interface SyncResult {
+  uploaded: number
+  downloaded: number
+  deleted: number
+  cancelled: number
+  /** Deletions that were not carried out because transfers were cancelled. */
+  deletesSkipped: number
+  failed: { rel: string; error: string }[]
+}
+
+/** A local folder that is watched; what changes in it is uploaded. */
+export interface WatchStatus {
+  id: string
+  sessionId: string
+  localDir: string
+  remoteDir: string
+  state: 'watching' | 'uploading'
+  uploaded: number
+  failed: number
+  /** The file that was uploaded last. */
+  lastName?: string
+  lastError?: string
+  startedAt: number
+}

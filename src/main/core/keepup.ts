@@ -1,0 +1,164 @@
+import { watch, type FSWatcher } from 'node:fs'
+import { lstat } from 'node:fs/promises'
+import { basename, join, posix, sep } from 'node:path'
+import type { WatchStatus } from '@shared/types'
+import type { PairOutcome, PairSpec } from './queue'
+import type { RemoteFs } from './remotefs'
+import { ignoredName } from './sync'
+
+/** Changes are collected for this long, so a file that is being saved is uploaded once. */
+const SETTLE_MS = 400
+/** Right after the start the system may still report changes from before it (macOS does). */
+const WARMUP_MS = 2000
+
+export interface KeepUpHost {
+  /** The session of the user. */
+  fs: RemoteFs
+  /** Upload exactly these files through the queue. */
+  transfer(items: PairSpec[]): Promise<PairOutcome[]>
+  /** Upload a whole new folder into a folder on the server. */
+  uploadFolder(localPath: string, remoteParent: string): Promise<void>
+  /** The status has changed. */
+  changed(): void
+}
+
+/**
+ * Watches a local folder and uploads what changes in it. Nothing is ever deleted on the server:
+ * a file that is removed here stays there.
+ */
+export class FolderWatch {
+  readonly status: WatchStatus
+  private watcher: FSWatcher | null = null
+  private pending = new Set<string>()
+  private timer: NodeJS.Timeout | null = null
+  private busy = false
+  private stopped = false
+  /** Folders (relative) that are known to exist on the server. */
+  private knownDirs = new Set<string>([''])
+
+  constructor(
+    id: string,
+    sessionId: string,
+    localDir: string,
+    remoteDir: string,
+    private readonly host: KeepUpHost,
+    private readonly ended: (error?: Error) => void
+  ) {
+    this.status = { id, sessionId, localDir, remoteDir, state: 'watching', uploaded: 0, failed: 0, startedAt: Date.now() }
+  }
+
+  start(): void {
+    this.watcher = watch(this.status.localDir, { recursive: true }, (_event, filename) => {
+      if (typeof filename === 'string' && filename) this.note(filename)
+    })
+    this.watcher.on('error', (e) => {
+      this.stop()
+      this.ended(e)
+    })
+  }
+
+  stop(): void {
+    this.stopped = true
+    if (this.timer) clearTimeout(this.timer)
+    this.timer = null
+    this.watcher?.close()
+    this.watcher = null
+  }
+
+  private note(filename: string): void {
+    const parts = filename.split(sep).filter(Boolean)
+    if (!parts.length || parts.some((p) => ignoredName(p) || p === '..' || /[\r\n\0]/.test(p))) return
+    this.pending.add(parts.join('/'))
+    this.schedule()
+  }
+
+  private schedule(): void {
+    if (this.stopped) return
+    if (this.timer) clearTimeout(this.timer)
+    this.timer = setTimeout(() => void this.flush(), SETTLE_MS)
+  }
+
+  private async ensureRemoteDir(rel: string): Promise<void> {
+    if (this.knownDirs.has(rel)) return
+    const parts = rel.split('/')
+    for (let i = 1; i <= parts.length; i++) {
+      const dir = parts.slice(0, i).join('/')
+      if (this.knownDirs.has(dir)) continue
+      const path = posix.join(this.status.remoteDir, dir)
+      try {
+        await this.host.fs.mkdir(path)
+      } catch (e) {
+        const there = await this.host.fs.stat(path).catch(() => null)
+        if (there?.type !== 'dir') throw e
+      }
+      this.knownDirs.add(dir)
+    }
+  }
+
+  private async flush(): Promise<void> {
+    this.timer = null
+    if (this.busy) return this.schedule()
+    const rels = [...this.pending].sort((a, b) => a.split('/').length - b.split('/').length)
+    this.pending.clear()
+    if (!rels.length || this.stopped) return
+    this.busy = true
+    this.status.state = 'uploading'
+    this.host.changed()
+    const specs: PairSpec[] = []
+    const wholeDirs: string[] = []
+    const problem = (name: string, e: unknown): void => {
+      this.status.failed++
+      this.status.lastError = `${name}: ${(e as Error).message}`
+    }
+    try {
+      for (const rel of rels) {
+        if (this.stopped) return
+        // A new folder is uploaded as a whole; what is inside needs no upload of its own.
+        if (wholeDirs.some((d) => rel.startsWith(d + '/'))) continue
+        const local = join(this.status.localDir, ...rel.split('/'))
+        const st = await lstat(local).catch(() => null)
+        // Removed here: it stays on the server.
+        if (!st) continue
+        const start = this.status.startedAt
+        if (Date.now() - start < WARMUP_MS && st.ctimeMs < start && st.mtimeMs < start) continue
+        const parent = posix.dirname(rel) === '.' ? '' : posix.dirname(rel)
+        const remote = posix.join(this.status.remoteDir, rel)
+        try {
+          if (st.isDirectory()) {
+            if (this.knownDirs.has(rel)) continue
+            const there = await this.host.fs.stat(remote).catch(() => null)
+            if (there?.type !== 'dir') {
+              await this.ensureRemoteDir(parent)
+              wholeDirs.push(rel)
+              await this.host.uploadFolder(local, posix.dirname(remote))
+              this.status.uploaded++
+              this.status.lastName = basename(local)
+            }
+            this.knownDirs.add(rel)
+          } else if (st.isFile()) {
+            await this.ensureRemoteDir(parent)
+            const there = await this.host.fs.stat(remote).catch(() => null)
+            // Already the same there (for instance a file that was just downloaded into this folder).
+            if (there?.type === 'file' && there.size === st.size && there.modifiedAt && !there.timePrecision && Math.abs(there.modifiedAt - st.mtimeMs) <= 2000) continue
+            specs.push({ direction: 'upload', local, remote, size: st.size, modifiedAt: st.mtimeMs, mode: process.platform === 'win32' ? undefined : st.mode & 0o777 })
+          }
+        } catch (e) {
+          problem(rel, e)
+        }
+      }
+      if (specs.length && !this.stopped) {
+        const outcomes = await this.host.transfer(specs)
+        outcomes.forEach((o, i) => {
+          if (o.state === 'done') {
+            this.status.uploaded++
+            this.status.lastName = basename(specs[i].local)
+          } else if (o.state === 'failed') problem(basename(specs[i].local), new Error(o.error ?? 'The upload failed'))
+        })
+      }
+    } finally {
+      this.busy = false
+      this.status.state = 'watching'
+      if (!this.stopped) this.host.changed()
+    }
+  }
+}

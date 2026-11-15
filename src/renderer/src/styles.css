@@ -484,6 +484,7 @@ select.field option { background: var(--bg-elevated); color: var(--text); }
 .sheet { width: min(520px, 100%); max-height: calc(100vh - 48px); display: flex; flex-direction: column; background: var(--bg-elevated); border-radius: var(--r-sheet); box-shadow: var(--shadow-sheet), inset 0 0.5px 0 var(--glass-highlight); user-select: text; animation: rise 0.18s cubic-bezier(0.2, 0.9, 0.3, 1); }
 .sheet.wide { width: min(620px, 100%); }
 .sheet.narrow { width: min(400px, 100%); }
+.sheet.xwide { width: min(920px, 100%); }
 .sheet > header { padding: 18px 20px 4px; }
 .sheet > header h2 { font: 600 15px var(--font-display); }
 .sheet > header .eyebrow { color: var(--text-2); font-size: 12px; margin-bottom: 3px; display: flex; align-items: center; gap: 6px; }
@@ -545,7 +546,55 @@ select.field option { background: var(--bg-elevated); color: var(--text); }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001s !important; transition-duration: 0.001s !important; }
+  .watch-bar svg.busy { animation: none !important; }
 }
+
+/* ----------------------------------------------------------------- sync */
+
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.sync-folder { display: flex; align-items: center; gap: 8px; }
+.sync-folder label { font-weight: 500; white-space: nowrap; }
+.sync-folder .field { flex: 1; min-width: 0; }
+.sync-mode { border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px 8px; margin: 0; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.sync-mode legend { padding: 0 4px; font-weight: 500; }
+.sync-mode label { display: flex; gap: 8px; align-items: flex-start; }
+.sync-mode label input { margin-top: 3px; flex-shrink: 0; }
+.sync-mode label.off { opacity: 0.55; }
+.sync-mode .hint { display: block; color: var(--text-2); font-size: 12px; line-height: 1.4; }
+.sync-run { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.sync-table { max-height: 38vh; min-height: 90px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.sync-table table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.sync-table thead th { position: sticky; top: 0; z-index: 1; background: var(--bg-elevated); text-align: left; font-weight: 500; color: var(--text-2); padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.sync-table tbody th, .sync-table td { padding: 4px 10px; border-top: 1px solid var(--line); text-align: left; font-weight: 400; vertical-align: middle; }
+.sync-table tbody tr:first-child th, .sync-table tbody tr:first-child td { border-top: none; }
+.sync-table tbody th { max-width: 320px; font-family: var(--mono); }
+.sync-table tbody th .name { display: flex; align-items: center; gap: 6px; min-width: 140px; }
+.sync-table tbody th .name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sync-table tbody th svg { flex-shrink: 0; color: var(--text-2); }
+.sync-table td { white-space: nowrap; }
+.sync-table td:nth-child(3), .sync-table td:nth-child(4) { color: var(--text-2); font-variant-numeric: tabular-nums; }
+.sync-table tr.skipped th, .sync-table tr.skipped td:nth-child(2) { color: var(--text-2); }
+.sync-table tr.deleting { background: var(--red-fill); }
+.sync-table select.field { height: 24px; width: 190px; font-size: 12px; }
+.sync-deletes { list-style: none; margin: 0; padding: 0; max-height: 46vh; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.sync-deletes li { display: flex; align-items: center; gap: 8px; padding: 5px 10px; font-size: 12px; }
+.sync-deletes li + li { border-top: 1px solid var(--line); }
+.sync-deletes .mono { font-family: var(--mono); overflow-wrap: anywhere; flex: 1; }
+.sync-deletes .where { color: var(--text-2); white-space: nowrap; }
+.sync-deletes svg { color: var(--text-2); flex-shrink: 0; }
+.note details summary { cursor: default; }
+.note ul { margin: 4px 0 0; padding-left: 18px; }
+.note p { margin: 0; }
+.note p + p, .note p + details { margin-top: 4px; }
+.note .mono { font-family: var(--mono); overflow-wrap: anywhere; }
+.watch-bar { border-bottom: 1px solid var(--line); background: var(--fill); }
+.watch-bar .watch { display: flex; align-items: center; gap: 8px; padding: 5px 12px; font-size: 12px; }
+.watch-bar .watch + .watch { border-top: 1px solid var(--line); }
+.watch-bar .what { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.watch-bar .mono { font-family: var(--mono); }
+.watch-bar svg { color: var(--accent); flex-shrink: 0; }
+.watch-bar svg.busy { animation: spin 1.2s linear infinite; }
+.watch-bar .problem { color: var(--red); }
 
 /* --------------------------------------------------------------- editor */
 

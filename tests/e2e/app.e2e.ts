@@ -2,7 +2,7 @@
 // stdio bridge and locking. Run with `npm run test:e2e` (builds first).
 // It also regenerates the screenshots in docs/screenshots (light, plus a few dark ones).
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -669,6 +669,101 @@ describe('Clavium desktop app', () => {
     for (const name of ['proj', 'many']) rmSync(onServer(name), { recursive: true, force: true })
     await view().getByRole('button', { name: 'Reload' }).click()
     await row('proj').waitFor({ state: 'detached' })
+  })
+
+  it('compares a local folder with the server, synchronises as a mirror and keeps the folder up to date', async () => {
+    const row = (name: string) => view().locator('.table tbody tr:not(.spacer)', { hasText: name })
+    const onServer = (...p: string[]): string => join(srv.root, 'site', ...p)
+    const text = (path: string): string => (existsSync(path) ? readFileSync(path, 'utf8') : '')
+    const until = async (what: () => boolean): Promise<void> => {
+      for (let i = 0; i < 400 && !what(); i++) await page.waitForTimeout(50)
+      expect(what()).toBe(true)
+    }
+    const local = realpathSync(mkdtempSync(join(tmpdir(), 'clavium-e2e-sync-')))
+    const old = new Date(Date.now() - 3 * 3600_000)
+    mkdirSync(onServer('css'), { recursive: true })
+    writeFileSync(onServer('index.html'), 'old page')
+    utimesSync(onServer('index.html'), old, old)
+    writeFileSync(onServer('css', 'gone.css'), 'no longer used')
+    writeFileSync(onServer('same.txt'), 'same')
+    utimesSync(onServer('same.txt'), old, old)
+    writeFileSync(join(local, 'index.html'), 'new page, longer')
+    writeFileSync(join(local, 'same.txt'), 'same')
+    utimesSync(join(local, 'same.txt'), old, old)
+    mkdirSync(join(local, 'js'))
+    writeFileSync(join(local, 'js', 'app.js'), 'let a')
+    await app.evaluate(({ dialog }, filePaths) => {
+      dialog.showOpenDialog = (async () => ({ canceled: false, filePaths })) as typeof dialog.showOpenDialog
+    }, [local])
+
+    await view().getByRole('button', { name: 'Reload' }).click()
+    await row('site').dblclick()
+    await row('index.html').waitFor()
+    await view().getByRole('button', { name: 'Synchronise This Folder' }).click()
+    const sheet = page.getByRole('dialog')
+    await sheet.getByText('Folder on the server: /site').waitFor()
+    // nothing can be synchronised before a comparison
+    expect(await sheet.getByRole('button', { name: 'Synchronise', exact: true }).isDisabled()).toBe(true)
+    await sheet.getByRole('button', { name: 'Choose…' }).click()
+    await expect.poll(() => sheet.getByLabel('Local folder').inputValue()).toBe(local)
+    await sheet.getByRole('button', { name: 'Compare', exact: true }).click()
+    await sheet.getByText('5 differences, 1 file equal.').waitFor()
+    const table = sheet.getByRole('table')
+    expect(await table.locator('tbody th').allInnerTexts()).toEqual(['css', 'css/gone.css', 'index.html', 'js', 'js/app.js'])
+    expect(await table.getByRole('row', { name: /index\.html/ }).innerText()).toContain('Newer on this computer')
+    // uploading alone never deletes
+    await sheet.getByText('Planned: 3 uploads, 2 left as they are.').waitFor()
+    expect(await sheet.getByRole('combobox', { name: 'Action for css/gone.css' }).inputValue()).toBe('skip')
+    expect(text(onServer('index.html'))).toBe('old page')
+
+    // the choices work with the keyboard
+    await sheet.getByRole('radio', { name: /^Upload to the server/ }).focus()
+    await page.keyboard.press('ArrowDown')
+    expect(await sheet.getByRole('radio', { name: /^Download to this computer/ }).isChecked()).toBe(true)
+    await sheet.getByText('Planned: 2 downloads, 3 left as they are.').waitFor()
+    await page.keyboard.press('ArrowUp')
+    await page.keyboard.press('Tab')
+    await page.keyboard.press('Space')
+    expect(await sheet.getByRole('checkbox', { name: /^Mirror/ }).isChecked()).toBe(true)
+    await sheet.getByText('Planned: 3 uploads, 2 deletions on the server.').waitFor()
+
+    // a mirror shows what it deletes and waits for a yes
+    await sheet.getByRole('button', { name: 'Synchronise…' }).click()
+    await page.getByRole('heading', { name: 'Delete 2 Items?' }).waitFor()
+    expect(await page.getByRole('list', { name: 'Items that will be deleted' }).locator('li .mono').allInnerTexts()).toEqual(['css', 'css/gone.css'])
+    expect(existsSync(onServer('css', 'gone.css'))).toBe(true)
+    await page.getByRole('button', { name: 'Back' }).click()
+    expect(existsSync(onServer('css', 'gone.css'))).toBe(true)
+    await sheet.getByRole('button', { name: 'Synchronise…' }).click()
+    await page.getByRole('button', { name: 'Delete and Synchronise' }).click()
+    await sheet.getByText('Finished, 3 uploaded, 2 deleted.').waitFor()
+    expect(text(onServer('index.html'))).toBe('new page, longer')
+    expect(text(onServer('js', 'app.js'))).toBe('let a')
+    expect(existsSync(onServer('css'))).toBe(false)
+    await sheet.getByRole('button', { name: 'Compare Again' }).click()
+    await sheet.getByText('The folders are the same: 3 files are equal on both sides.').waitFor()
+
+    // keep the folder up to date: status in the file view, and a button to stop
+    await sheet.getByRole('button', { name: 'Keep Up to Date' }).click()
+    await sheet.waitFor({ state: 'detached' })
+    const bar = view().locator('.watch-bar')
+    await bar.getByText(/Keeping \/site up to date/).waitFor()
+    await page.waitForTimeout(300)
+    writeFileSync(join(local, 'live.txt'), 'saved just now')
+    await until(() => text(onServer('live.txt')) === 'saved just now')
+    await bar.getByText(/1 change uploaded\. Last: live\.txt\./).waitFor()
+    await row('live.txt').waitFor()
+    await bar.getByRole('button', { name: 'Stop keeping /site up to date' }).click()
+    await bar.waitFor({ state: 'detached' })
+    writeFileSync(join(local, 'late.txt'), 'x')
+    await page.waitForTimeout(900)
+    expect(existsSync(onServer('late.txt'))).toBe(false)
+
+    await view().getByRole('button', { name: 'Enclosing Folder' }).click()
+    rmSync(join(srv.root, 'site'), { recursive: true, force: true })
+    rmSync(local, { recursive: true, force: true })
+    await view().getByRole('button', { name: 'Reload' }).click()
+    await row('site').waitFor({ state: 'detached' })
   })
 
   let token = ''

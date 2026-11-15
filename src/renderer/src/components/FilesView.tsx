@@ -15,6 +15,7 @@ import {
   Folder,
   FolderPlus,
   FolderSearch,
+  FolderSync,
   FolderTree as FolderTreeIcon,
   Info,
   Star,
@@ -29,9 +30,10 @@ import {
   Upload,
   X
 } from 'lucide-react'
-import type { HostSummary, MovePair, RemoteEntry } from '@shared/types'
+import type { HostSummary, MovePair, RemoteEntry, WatchStatus } from '@shared/types'
 import { api, on } from '../api'
 import { TransferPanel } from './Transfers'
+import { SyncSheet, WatchBar } from './SyncSheet'
 import { FolderTree, PropertiesSheet, SearchSheet, countOf, joinPath as join, parentOf } from './FileTools'
 import { Empty, IconButton, Sheet, Toolbar, formatBytes, formatDate, useConfirm, useMenu, useToast, type MenuItem } from '../ui'
 import { StatusDot, type ConnState } from './TerminalView'
@@ -99,6 +101,13 @@ export function FilesView(props: {
   const filterRef = useRef<HTMLInputElement>(null)
   const [propsFor, setPropsFor] = useState<RemoteEntry[] | null>(null)
   const [searching, setSearching] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [allWatches, setWatches] = useState<WatchStatus[]>([])
+  const watches = useMemo(() => allWatches.filter((w) => w.sessionId === sid), [allWatches, sid])
+  useEffect(() => {
+    void api.files.watchList().then(setWatches, () => undefined)
+    return on('files:watch', (list: WatchStatus[]) => setWatches(list))
+  }, [])
   const [showTree, setShowTree] = useState(() => readPref('files.tree', '1') === '1')
   const [bookmarks, setBookmarks] = useState<string[]>(props.host.bookmarks ?? [])
   /** the last listing, for the folder tree */
@@ -612,6 +621,7 @@ export function FilesView(props: {
       { label: 'Upload Folder…', icon: FolderUp, onSelect: () => upload('folder') },
       'separator',
       { label: 'Search on the Server…', icon: FolderSearch, hint: keys('Ctrl+Shift+F'), onSelect: () => setSearching(true) },
+      { label: 'Synchronise This Folder…', icon: FolderSync, onSelect: () => setSyncing(true) },
       { label: 'Properties of This Folder…', icon: Info, onSelect: () => setPropsFor([{ name: cwd === '/' ? '/' : cwd.split('/').pop()!, path: cwd, type: 'dir', size: 0, modifiedAt: 0 }]) },
       { label: showHidden ? 'Hide Hidden Files' : 'Show Hidden Files', icon: showHidden ? EyeOff : Eye, onSelect: toggleHidden },
       { label: 'Reload', icon: RotateCw, onSelect: () => void load(cwd) }
@@ -754,6 +764,7 @@ export function FilesView(props: {
         />
         <IconButton icon={Download} label="Download" disabled={!selEntries.length} onClick={() => download(selEntries)} />
         <IconButton icon={FolderSearch} label="Search on the Server" disabled={!connected} onClick={() => setSearching(true)} />
+        <IconButton icon={FolderSync} label="Synchronise This Folder" disabled={!connected} onClick={() => setSyncing(true)} />
         <IconButton icon={Info} label="Properties" disabled={!selEntries.length} onClick={() => setPropsFor(selEntries)} />
         <IconButton icon={Undo2} label={undoStep ? `Undo ${undoStep.label}` : 'Undo'} disabled={!connected || !undoStep} onClick={() => void undo()} />
         <IconButton icon={Trash2} label="Delete" disabled={!selEntries.length} onClick={() => void remove(selEntries)} />
@@ -844,6 +855,7 @@ export function FilesView(props: {
               </div>
             </div>
 
+            <WatchBar watches={watches} />
             <div className="file-split">
             {showTree && sid && (
               <FolderTree sid={sid} cwd={cwd} showHidden={showHidden} listing={listing} onOpen={(p) => void load(p)} dropProps={dropProps} onDragLeave={() => setDropTarget(null)} />
@@ -955,6 +967,7 @@ export function FilesView(props: {
       {propsFor && sid && (
         <PropertiesSheet sid={sid} canChown={props.host.protocol === 'ssh'} items={propsFor} close={() => setPropsFor(null)} changed={() => void load(cwdRef.current)} />
       )}
+      {syncing && sid && <SyncSheet sid={sid} hostId={props.host.id} remoteDir={cwd} watching={watches} close={() => setSyncing(false)} />}
       {searching && sid && <SearchSheet sid={sid} root={cwd} onReveal={revealHit} close={() => setSearching(false)} />}
     </>
   )

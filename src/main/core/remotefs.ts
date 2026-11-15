@@ -109,6 +109,36 @@ export function assertSafeRemotePath(p: string): string {
   return p
 }
 
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+
+/**
+ * The time in a plain FTP listing ("Mar 9 14:05", "Mar 9 2023", "03-09-23 02:05PM"). Such a
+ * listing names neither seconds nor a time zone, and for older files not even the time of day.
+ * The time is read as UTC; comparing folders finds out the shift of the server clock.
+ */
+export function listTime(raw: string, now = Date.now()): Pick<RemoteEntry, 'modifiedAt' | 'timePrecision'> {
+  const unix = /^([A-Za-z]{3})\s+(\d{1,2})\s+(?:(\d{1,2}):(\d{2})|(\d{4}))$/.exec(raw.trim())
+  if (unix) {
+    const month = MONTHS.indexOf(unix[1].toLowerCase())
+    if (month < 0) return { modifiedAt: 0 }
+    if (unix[5]) return { modifiedAt: Date.UTC(Number(unix[5]), month, Number(unix[2])), timePrecision: 'day' }
+    const year = new Date(now).getUTCFullYear()
+    let at = Date.UTC(year, month, Number(unix[2]), Number(unix[3]), Number(unix[4]))
+    // Without a year the date lies in the last twelve months (a day of slack for time zones).
+    if (at > now + 24 * 3600_000) at = Date.UTC(year - 1, month, Number(unix[2]), Number(unix[3]), Number(unix[4]))
+    return { modifiedAt: at, timePrecision: 'minute' }
+  }
+  const dos = /^(\d{2})-(\d{2})-(\d{2,4})\s+(\d{1,2}):(\d{2})\s*([AP]M)?$/i.exec(raw.trim())
+  if (dos) {
+    let year = Number(dos[3])
+    if (year < 100) year += year < 70 ? 2000 : 1900
+    let hour = Number(dos[4]) % (dos[6] ? 12 : 24)
+    if (dos[6]?.toUpperCase() === 'PM') hour += 12
+    return { modifiedAt: Date.UTC(year, Number(dos[1]) - 1, Number(dos[2]), hour, Number(dos[5])), timePrecision: 'minute' }
+  }
+  return { modifiedAt: 0 }
+}
+
 // ---------------------------------------------------------------- SFTP ----
 
 /** Size of one read or write request, and how many of them are on their way at once. */
@@ -585,7 +615,7 @@ export class FtpFs implements RemoteFs {
     return this.run(() => this.client.pwd())
   }
 
-  private toEntry(dir: string, i: { name: string; type: FileType; size: number; modifiedAt?: Date; permissions?: { user: number; group: number; world: number }; user?: string; group?: string }): RemoteEntry {
+  private toEntry(dir: string, i: { name: string; type: FileType; size: number; modifiedAt?: Date; rawModifiedAt?: string; permissions?: { user: number; group: number; world: number }; user?: string; group?: string }): RemoteEntry {
     const type: RemoteEntry['type'] =
       i.type === FileType.Directory ? 'dir' : i.type === FileType.SymbolicLink ? 'link' : i.type === FileType.File ? 'file' : 'other'
     const perm = i.permissions
@@ -598,7 +628,7 @@ export class FtpFs implements RemoteFs {
       path: posix.join(dir, i.name),
       type,
       size: i.size,
-      modifiedAt: i.modifiedAt ? i.modifiedAt.getTime() : 0,
+      ...(i.modifiedAt ? { modifiedAt: i.modifiedAt.getTime() } : listTime(i.rawModifiedAt ?? '')),
       permissions: perm,
       owner: i.user?.slice(0, 64) || undefined,
       group: i.group?.slice(0, 64) || undefined

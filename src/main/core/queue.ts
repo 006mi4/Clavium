@@ -78,6 +78,23 @@ interface Batch {
   listings: Map<string, Promise<Map<string, RemoteEntry>>>
   /** Local names handed out per folder (lower case), with the server path each one stands for. */
   names: Map<string, Map<string, string>>
+  /** Keep times and permissions whatever the settings say (synchronising depends on the times). */
+  preserve?: boolean
+}
+
+/** One file and the exact place it goes to. */
+export interface PairSpec {
+  direction: 'upload' | 'download'
+  local: string
+  remote: string
+  size: number
+  modifiedAt: number
+  mode?: number
+}
+
+export interface PairOutcome {
+  state: 'done' | 'failed' | 'cancelled' | 'skipped'
+  error?: string
 }
 
 interface Entry {
@@ -198,6 +215,29 @@ export class TransferQueue {
     return done
   }
 
+  /**
+   * Transfer exactly these files, each to exactly its target, replacing what is there. The folders
+   * they go into must exist. Resolves with how each one ended, in the order given.
+   */
+  async pairs(sessionId: string, fs: RemoteFs, items: PairSpec[], options: { rule?: ExistingRule; preserve?: boolean } = {}): Promise<PairOutcome[]> {
+    const { batch, done } = this.batch(sessionId, fs, options.rule ?? 'overwrite')
+    batch.preserve = options.preserve
+    const added: (Entry | null)[] = []
+    void this.scan(batch, async () => {
+      for (const item of items) {
+        const name = item.direction === 'upload' ? basename(item.local) : posix.basename(item.remote)
+        added.push(this.add(batch, item.direction, { name, path: item.direction === 'upload' ? item.local : item.remote, size: item.size, modifiedAt: item.modifiedAt, mode: item.mode }, item.direction === 'upload' ? item.remote : item.local))
+      }
+    })
+    await done
+    return items.map((_, i) => {
+      const entry = added[i]
+      if (!entry || entry.state === 'cancelled') return { state: 'cancelled' }
+      if (entry.state === 'done' || entry.state === 'skipped') return { state: entry.state }
+      return { state: 'failed', error: entry.error }
+    })
+  }
+
   private async scan(batch: Batch, work: () => Promise<void>): Promise<void> {
     batch.scans++
     this.scans++
@@ -218,10 +258,10 @@ export class TransferQueue {
     if (batch.scans === 0 && batch.open === 0) batch.settle()
   }
 
-  private add(batch: Batch, direction: 'upload' | 'download', source: { name: string; path: string; size: number; modifiedAt: number; mode?: number }, target: string, rule?: ExistingRule): void {
-    if (batch.cancelled) return
+  private add(batch: Batch, direction: 'upload' | 'download', source: { name: string; path: string; size: number; modifiedAt: number; mode?: number }, target: string, rule?: ExistingRule): Entry | null {
+    if (batch.cancelled) return null
     batch.open++
-    this.entries.push({
+    const entry: Entry = {
       id: randomId(),
       batch,
       direction,
@@ -240,8 +280,10 @@ export class TransferQueue {
       rule,
       lastBytes: 0,
       lastTick: 0
-    })
+    }
+    this.entries.push(entry)
     this.pump()
+    return entry
   }
 
   /** An entry for a folder or file that could not even be read. Retrying it reads it again. */
@@ -287,7 +329,7 @@ export class TransferQueue {
   private async scanDownload(batch: Batch, entry: RemoteEntry, localDir: string, depth: number): Promise<void> {
     if (batch.cancelled) return
     const local = join(localDir, this.localName(batch, localDir, entry))
-    if (entry.type === 'file') return this.add(batch, 'download', { ...entry, mode: modeOf(entry.permissions) }, local)
+    if (entry.type === 'file') return void this.add(batch, 'download', { ...entry, mode: modeOf(entry.permissions) }, local)
     // links and special files are skipped on purpose
     if (entry.type !== 'dir') return
     let children: RemoteEntry[]
@@ -320,7 +362,7 @@ export class TransferQueue {
       if (depth > 64) throw new Error('Directory tree too deep')
       const st = await stat(localPath)
       if (st.isFile()) {
-        return this.add(batch, 'upload', { name, path: localPath, size: st.size, modifiedAt: st.mtimeMs, mode: process.platform === 'win32' ? undefined : st.mode & 0o777 }, remotePath)
+        return void this.add(batch, 'upload', { name, path: localPath, size: st.size, modifiedAt: st.mtimeMs, mode: process.platform === 'win32' ? undefined : st.mode & 0o777 }, remotePath)
       }
       if (!st.isDirectory()) return
       const siblings = await this.listing(batch, posix.dirname(remotePath))
@@ -580,7 +622,7 @@ export class TransferQueue {
     entry.resumeAt = offset
     await fs.download(entry.remote, part, { ...options, offset })
     await rename(part, entry.local)
-    if (this.host.settings().transferPreserve) {
+    if (entry.batch?.preserve ?? this.host.settings().transferPreserve) {
       if (entry.mtime > 0) await utimes(entry.local, new Date(), new Date(entry.mtime)).catch(() => undefined)
       // The owner keeps access to what was just downloaded.
       if (entry.mode !== undefined && process.platform !== 'win32') await chmod(entry.local, entry.mode | 0o600).catch(() => undefined)
@@ -600,7 +642,7 @@ export class TransferQueue {
     } finally {
       if (entry.started) this.changed((entry.batch as Batch).sessionId)
     }
-    if (this.host.settings().transferPreserve) {
+    if (entry.batch?.preserve ?? this.host.settings().transferPreserve) {
       if (entry.mtime > 0) await fs.setModified(entry.remote, entry.mtime).catch(() => undefined)
       // An existing file keeps the permissions it has on the server.
       if (entry.mode !== undefined && !entry.replaces && fs.protocol === 'sftp') await fs.chmod(entry.remote, entry.mode).catch(() => undefined)
