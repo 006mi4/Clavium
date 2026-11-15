@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { FolderOpen, Layers, Plus, Power, RotateCw, X } from 'lucide-react'
-import type { HostSummary, ScreenList, ScreenTarget } from '@shared/types'
+import { Container, FolderOpen, Layers, Plus, Power, RotateCw, X } from 'lucide-react'
+import type { HostSummary, ScreenList, TerminalTarget } from '@shared/types'
 import { api, on } from '../api'
 import { IconButton, Sheet, Toolbar, useConfirm, useDarkMode, useMenu, useToast, type MenuItem } from '../ui'
 
@@ -73,15 +73,21 @@ export function TerminalView(props: {
   active: boolean
   fontSize: number
   onState: (s: ConnState) => void
-  /** set when this tab shows a screen of the server instead of a shell */
-  screen?: { target: ScreenTarget; name: string }
+  /** set when this tab shows something else than a login shell: a screen, a container log, a shell in a container */
+  target?: { target: TerminalTarget; name: string }
   onOpenFiles: () => void
-  onOpenScreen: (screen: { target: ScreenTarget; name: string }) => void
+  onOpenScreen: (screen: { target: TerminalTarget; name: string }) => void
+  onOpenDocker: () => void
   onClose: () => void
 }) {
   const toast = useToast()
   const confirm = useConfirm()
   const menu = useMenu()
+  const special = props.target?.target
+  /** a screen of the server; null for everything else */
+  const screen = special && ('attach' in special || 'create' in special) ? { target: special, name: props.target?.name ?? '' } : null
+  const docker = special && 'dockerLogs' in special ? 'Log of a container' : special && 'dockerShell' in special ? 'Shell in a container' : null
+  const [hasDocker, setHasDocker] = useState(false)
   /** screens of the logged-in user; null until the server has answered */
   const [screens, setScreens] = useState<ScreenList | null>(null)
   const [naming, setNaming] = useState(false)
@@ -195,21 +201,25 @@ export function TerminalView(props: {
     update('connecting')
     fit()
     api.term
-      .open(props.host.id, Math.max(term.cols, 20), Math.max(term.rows, 5), props.screen?.target)
+      .open(props.host.id, Math.max(term.cols, 20), Math.max(term.rows, 5), props.target?.target)
       .then((id) => {
         if (cancelled) {
           void api.term.close(id)
           return
         }
-        if (props.screen) term.reset() // a reconnect brings the history again
+        if (props.target) term.reset() // a reconnect brings the history again
         sessionRef.current = id
         update('connected')
         term.focus()
-        // Look for screens quietly; a server without screen simply shows no button.
-        if (props.host.protocol === 'ssh') {
+        // Look for screens and Docker quietly; a server without them simply shows no button.
+        if (props.host.protocol === 'ssh' && !props.target) {
           api.term
             .screens(id)
             .then((list) => !cancelled && setScreens(list))
+            .catch(() => undefined)
+          api.term
+            .hasDocker(id)
+            .then((yes) => !cancelled && setHasDocker(yes))
             .catch(() => undefined)
         }
       })
@@ -260,10 +270,10 @@ export function TerminalView(props: {
     menu.openBelow({ currentTarget: { getBoundingClientRect: () => anchor } } as React.MouseEvent<HTMLElement>, items)
   }
   const endScreen = async (): Promise<void> => {
-    const target = props.screen?.target
+    const target = screen?.target
     if (!target || !sessionRef.current) return
     const ok = await confirm({
-      title: `End the Screen “${props.screen?.name}”?`,
+      title: `End the Screen “${screen?.name}”?`,
       message: 'The program running in it is stopped. To leave it running, just close this tab instead.',
       confirmLabel: 'End Screen',
       destructive: true
@@ -282,27 +292,32 @@ export function TerminalView(props: {
   return (
     <>
       <Toolbar
-        title={props.screen ? props.screen.name : props.host.name}
+        title={props.target ? props.target.name : props.host.name}
         subtitle={
           <>
             <StatusDot state={state} />
-            {props.screen && state === 'connected' ? 'Screen' : STATE_TEXT[state]}
+            {state === 'connected' && (screen || docker) ? (screen ? 'Screen' : docker) : STATE_TEXT[state]}
             <span className="mono" style={{ marginLeft: 6 }}>
               {props.host.username}@{props.host.hostname}
             </span>
-            {props.screen && state === 'connected' && <span style={{ marginLeft: 8 }}>· keeps running when you close this tab</span>}
+            {screen && state === 'connected' && <span style={{ marginLeft: 8 }}>· keeps running when you close this tab</span>}
           </>
         }
       >
         {state !== 'connecting' && state !== 'connected' && <IconButton icon={RotateCw} label="Reconnect" onClick={() => setAttempt((a) => a + 1)} />}
-        {!props.screen && screens?.installed && state === 'connected' && (
+        {!props.target && hasDocker && state === 'connected' && (
+          <button className="btn" title="Containers and images on this server" onClick={props.onOpenDocker}>
+            <Container size={14} /> Docker
+          </button>
+        )}
+        {!props.target && screens?.installed && state === 'connected' && (
           <button className="btn" title="Programs that keep running on the server (GNU screen)" onClick={(e) => void openScreensMenu(e)}>
             <Layers size={14} /> Screens{count ? ` · ${count}` : ''}
           </button>
         )}
-        {props.screen && state === 'connected' && <IconButton icon={Power} label="End Screen…" onClick={() => void endScreen()} />}
+        {screen && state === 'connected' && <IconButton icon={Power} label="End Screen…" onClick={() => void endScreen()} />}
         <IconButton icon={FolderOpen} label="Browse Files" onClick={props.onOpenFiles} />
-        <IconButton icon={X} label={props.screen ? 'Close Tab (the screen keeps running)' : 'Close Session'} onClick={props.onClose} />
+        <IconButton icon={X} label={screen ? 'Close Tab (the screen keeps running)' : docker ? 'Close Tab' : 'Close Session'} onClick={props.onClose} />
       </Toolbar>
       {menu.element}
       {naming && (

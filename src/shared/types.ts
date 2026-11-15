@@ -148,6 +148,69 @@ export interface ScreenList {
 /** What a terminal tab shows instead of a plain shell. */
 export type ScreenTarget = { attach: string } | { create: string }
 
+/** A terminal tab that runs something else than a login shell. The docker ids are container ids. */
+export type TerminalTarget = ScreenTarget | { dockerLogs: string } | { dockerShell: string }
+
+// ---- Docker on a server ---------------------------------------------------
+
+export interface DockerContainer {
+  /** full hexadecimal id */
+  id: string
+  name: string
+  image: string
+  state: 'running' | 'paused' | 'restarting' | 'exited' | 'created' | 'dead' | 'removing'
+  /** Docker's own wording, e.g. "Up 3 hours" or "Exited (0) 2 days ago" */
+  status: string
+  /** e.g. "8080 → 80" */
+  ports: string[]
+  /** Docker Compose project and service, when the container belongs to one */
+  project?: string
+  service?: string
+}
+
+export interface DockerOverview {
+  /** missing: no docker on the server · denied: this user may not use it */
+  status: 'ok' | 'missing' | 'denied' | 'error'
+  version?: string
+  message?: string
+  containers: DockerContainer[]
+}
+
+export interface DockerStats {
+  id: string
+  cpu: string
+  memory: string
+  memoryPercent: string
+}
+
+export interface DockerImage {
+  id: string
+  repository: string
+  tag: string
+  size: string
+  created: string
+  /** at least one container was made from it */
+  inUse: boolean
+}
+
+export type DockerRestartPolicy = 'no' | 'on-failure' | 'unless-stopped' | 'always'
+export type DockerAction = 'start' | 'stop' | 'restart' | 'pause' | 'unpause' | 'remove'
+
+export interface DockerDetails {
+  id: string
+  name: string
+  image: string
+  command: string
+  created: string
+  startedAt: string
+  restartPolicy: DockerRestartPolicy
+  restartCount: number
+  mounts: { source: string; target: string; readOnly: boolean }[]
+  networks: { name: string; ip: string }[]
+  /** folder of the compose file on the server */
+  workingDir?: string
+}
+
 export interface MovePair {
   from: string
   to: string

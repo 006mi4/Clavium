@@ -28,6 +28,10 @@
   click opens a screen in its own tab, with what it printed so far in the scrollback, so the mouse wheel just
   works. The keyboard goes straight to the program inside, e.g. the console of a game server. Closing the tab
   only detaches (like Ctrl+A, D); the program keeps running. Ending a screen is a separate button that asks first.
+- **Docker overview**: when a server has Docker, the terminal offers a page for it. It lists all containers,
+  grouped by Compose project, with status, ports, processor and memory use. Start, stop, restart, pause and
+  remove containers with one click, or a whole project at once. Open the log of a container or a shell inside
+  it as a tab, set whether a container starts again by itself, and see and delete images.
 - **File manager for SFTP and FTP(S)** that works the way Explorer does:
   - drag files and whole folders from Windows into the window to upload them, onto a folder to upload into it
   - drag files and folders out of the window onto the desktop or into an Explorer window to download them
@@ -258,6 +262,8 @@ npm run dev        # start in development mode
 npm test           # unit + integration tests (local SSH/SFTP test server, MCP, bridge)
 # optional, needs a server with GNU screen and key login:
 #   CLAVIUM_SCREEN_TEST=user@host:22 CLAVIUM_SCREEN_KEY=~/.ssh/id_ed25519 npx vitest run -c vitest.e2e.config.mts tests/e2e/screen.e2e.ts
+# optional, needs a server with Docker, key login and an image with `sh` on it:
+#   CLAVIUM_DOCKER_TEST=user@host:22 CLAVIUM_DOCKER_KEY=~/.ssh/id_ed25519 CLAVIUM_DOCKER_IMAGE=alpine npx vitest run -c vitest.e2e.config.mts tests/e2e/docker.e2e.ts
 npm run test:e2e   # drives the real Electron app with Playwright
 npm run dist       # build dist/Clavium-Setup-x.y.z.exe and dist/Clavium-x.y.z-portable.exe
 ```

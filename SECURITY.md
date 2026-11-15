@@ -61,6 +61,18 @@ Non-secret preferences live in `settings.json`; the AI activity log in `audit.lo
 - To show earlier output, screen writes it to a file created with `mktemp` on the server (readable by the
   user only), which is read and deleted right away. The screen's history is raised to 5000 lines.
 
+### Docker
+
+- The overview runs the `docker` command of the server over SSH, with the rights of the logged-in user. It
+  never uses `sudo` and never asks for a password; a user who may not use Docker gets an explanation instead.
+- Containers and images are addressed only by the hexadecimal id that Docker printed. Names, which anyone who
+  creates a container can choose freely, never become part of a command line. Actions and restart policies
+  come from fixed lists.
+- Removing a container needs a confirmation and is refused by Docker while the container runs (no `-f`).
+  Deleting an image needs a confirmation and is not offered for images in use.
+- Details of a container are shown without its environment variables, which often contain passwords.
+- AI clients (MCP) have no Docker tools.
+
 ### File transfers, drag and drop, clipboard
 
 - Moving and copying on the server never replaces an existing item; an upload that would replace something

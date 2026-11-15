@@ -1,5 +1,6 @@
 import type { Client, ClientChannel } from 'ssh2'
-import type { HostRecord, ScreenList, ScreenTarget } from '@shared/types'
+import type { HostRecord, ScreenList, TerminalTarget } from '@shared/types'
+import { logsCommand, shellCommand } from './core/docker'
 import { randomId } from './core/crypto'
 import type { Prompter } from './core/prompter'
 import { AltScreenFilter, LIST_COMMAND, SCREEN_NAME, historyCommand, parseHistory, parseScreenList, pushIntoScrollback, shellQuote } from './core/screens'
@@ -33,13 +34,17 @@ export class TerminalManager {
    * connection, and screen reacts to that by detaching: the program inside keeps running, just as
    * after Ctrl+A, D. Nothing here ever asks a screen to quit; that is `endScreen`.
    */
-  async open(host: HostRecord, cols: number, rows: number, screen?: ScreenTarget): Promise<string> {
-    if (screen && host.protocol !== 'ssh') throw new Error('Screens need an SSH connection')
+  async open(host: HostRecord, cols: number, rows: number, target?: TerminalTarget): Promise<string> {
+    if (target && host.protocol !== 'ssh') throw new Error('This needs an SSH connection')
+    // The log of a container, or a shell inside one. Ending the tab ends only that command.
+    const docker = target && 'dockerLogs' in target ? logsCommand(target.dockerLogs) : target && 'dockerShell' in target ? shellCommand(target.dockerShell) : null
+    const screen = target && !docker ? (target as Exclude<TerminalTarget, { dockerLogs: string } | { dockerShell: string }>) : undefined
     const client = await connectSsh(host, { vault: this.vault, prompter: this.prompter, interactive: true })
     const pty = { term: 'xterm-256color', cols, rows }
     /** id of the screen whose earlier output is fetched once it is attached */
     let attached: string | null = null
     const start = async (): Promise<ClientChannel> => {
+      if (docker) return new Promise((resolve, reject) => client.exec(docker, { pty }, (err, s) => (err ? reject(err) : resolve(s))))
       if (!screen) return new Promise((resolve, reject) => client.shell(pty, (err, s) => (err ? reject(err) : resolve(s))))
       let command: string
       const list = await this.listOn(client)
@@ -126,6 +131,14 @@ export class TerminalManager {
     const s = this.sessions.get(id)
     if (!s) throw new Error('This terminal is no longer connected')
     return this.listOn(s.client)
+  }
+
+  /** Whether the docker command exists for the user of this terminal. Changes nothing. */
+  async hasDocker(id: string): Promise<boolean> {
+    const s = this.sessions.get(id)
+    if (!s) return false
+    const r = await execCommand(s.client, 'command -v docker >/dev/null 2>&1 && echo yes', { timeoutMs: 8000, maxBytes: 1024 })
+    return r.stdout.includes('yes')
   }
 
   /** End a screen and the program running in it. Only on an explicit request of the user. */

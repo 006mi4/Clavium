@@ -17,6 +17,7 @@ import { AuditLog } from './core/audit'
 import { SettingsStore } from './core/settings'
 import { Vault } from './core/vault'
 import { WindowEditorBridge } from './editorBridge'
+import { DockerManager } from './docker'
 import { FileManager } from './files'
 import { ForwardManager } from './forwards'
 import { registerIpc } from './ipc'
@@ -109,6 +110,7 @@ function runApp(): void {
     writeClipboardFiles,
     clearClipboard: () => clipboard.clear()
   })
+  const docker = new DockerManager(vault, prompter, send)
   const forwards = new ForwardManager(vault, prompter, () => send('fwd:changed'))
   const editor = new WindowEditorBridge(getWindow)
   const mcp = new McpController({
@@ -130,6 +132,7 @@ function runApp(): void {
       prompter.cancelAll()
       terminals.closeAll()
       files.closeAll()
+      docker.closeAll()
       forwards.stopAll()
       mcp.service.shutdown() // drop AI connections immediately on lock
     } else {
@@ -249,7 +252,7 @@ function runApp(): void {
     session.defaultSession.setPermissionCheckHandler(() => false)
 
     const dragIcon = nativeImage.createFromPath(iconPath).resize({ width: 40, height: 40 })
-    registerIpc({ window: getWindow, vault, settings, audit, prompter, mcp, terminals, files, forwards, updater, editor, dragIcon: () => dragIcon })
+    registerIpc({ window: getWindow, vault, settings, audit, prompter, mcp, terminals, files, docker, forwards, updater, editor, dragIcon: () => dragIcon })
     createWindow()
 
     if (existsSync(iconPath)) {
@@ -282,6 +285,7 @@ function runApp(): void {
     prompter.cancelAll()
     terminals.closeAll()
     files.closeAll()
+    docker.closeAll()
     emptyTransferDir()
     forwards.stopAll()
     void mcp.shutdown()

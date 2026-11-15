@@ -9,6 +9,8 @@ import { buildKeyRecord, generateKey, summarizeKey } from './core/keys'
 import { settingsSchema, type SettingsStore } from './core/settings'
 import { MAX_TEXT_BYTES, readTextFile, writeTextFile } from './core/textfile'
 import type { Vault } from './core/vault'
+import { CONTAINER_ACTIONS, RESTART_POLICIES } from './core/docker'
+import type { DockerManager } from './docker'
 import type { FileManager } from './files'
 import type { ForwardManager } from './forwards'
 import type { WindowEditorBridge } from './editorBridge'
@@ -28,6 +30,7 @@ export interface IpcContext {
   mcp: McpController
   terminals: TerminalManager
   files: FileManager
+  docker: DockerManager
   /** picture shown next to the pointer while files are dragged out of the window */
   dragIcon: () => Electron.NativeImage
   forwards: ForwardManager
@@ -258,10 +261,28 @@ export function registerIpc(ctx: IpcContext): void {
   const cols = z.number().int().min(2).max(1000)
   const rows = z.number().int().min(2).max(500)
   const screenId = z.string().min(3).max(200).regex(/^\d+\.[^\r\n\0\t]+$/)
-  const screenTarget = z.union([z.object({ attach: screenId }).strict(), z.object({ create: z.string().min(1).max(40) }).strict()])
+  const containerId = z.string().regex(/^(sha256:)?[0-9a-f]{12,64}$/)
+  const screenTarget = z.union([
+    z.object({ attach: screenId }).strict(),
+    z.object({ create: z.string().min(1).max(40) }).strict(),
+    z.object({ dockerLogs: containerId }).strict(),
+    z.object({ dockerShell: containerId }).strict()
+  ])
   handle('term:open', z.tuple([id, cols, rows, screenTarget.optional()]), (hostId, c, r, screen) => ctx.terminals.open(host(hostId), c, r, screen))
   handle('term:screens', z.tuple([id]), (sid) => ctx.terminals.screens(sid))
   handle('term:endScreen', z.tuple([id, screenId]), (sid, screen) => ctx.terminals.endScreen(sid, screen))
+  handle('term:hasDocker', z.tuple([id]), (sid) => ctx.terminals.hasDocker(sid))
+
+  // docker
+  handle('docker:open', z.tuple([id]), (hostId) => ctx.docker.open(host(hostId)))
+  handle('docker:overview', z.tuple([id]), (did) => ctx.docker.overview(did))
+  handle('docker:stats', z.tuple([id]), (did) => ctx.docker.stats(did))
+  handle('docker:images', z.tuple([id]), (did) => ctx.docker.images(did))
+  handle('docker:inspect', z.tuple([id, containerId]), (did, c) => ctx.docker.inspect(did, c))
+  handle('docker:action', z.tuple([id, z.enum(CONTAINER_ACTIONS), z.array(containerId).min(1).max(200)]), (did, action, ids) => ctx.docker.action(did, action, ids))
+  handle('docker:restartPolicy', z.tuple([id, containerId, z.enum(RESTART_POLICIES)]), (did, c, policy) => ctx.docker.setRestartPolicy(did, c, policy))
+  handle('docker:removeImage', z.tuple([id, containerId]), (did, image) => ctx.docker.removeImage(did, image))
+  handle('docker:close', z.tuple([id]), (did) => ctx.docker.close(did))
   handle('term:write', z.tuple([id, z.string().max(1024 * 1024)]), (sid, data) => ctx.terminals.write(sid, data))
   handle('term:resize', z.tuple([id, cols, rows]), (sid, c, r) => ctx.terminals.resize(sid, c, r))
   handle('term:close', z.tuple([id]), (sid) => ctx.terminals.close(sid))

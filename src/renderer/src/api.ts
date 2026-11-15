@@ -4,6 +4,12 @@ import type {
   AppSettings,
   AuditEntry,
   ClipboardCopyResult,
+  DockerAction,
+  DockerDetails,
+  DockerImage,
+  DockerOverview,
+  DockerRestartPolicy,
+  DockerStats,
   CopyResult,
   HostInput,
   HostSummary,
@@ -14,7 +20,7 @@ import type {
   PromptResponse,
   RemoteEntry,
   ScreenList,
-  ScreenTarget,
+  TerminalTarget,
   SshKeySummary,
   TextFile,
   TextFileVersion,
@@ -80,12 +86,24 @@ export const api = {
     snippets: () => call<McpSnippets>('mcp:snippets')
   },
   term: {
-    open: (hostId: string, cols: number, rows: number, screen?: ScreenTarget) => call<string>('term:open', hostId, cols, rows, screen),
+    open: (hostId: string, cols: number, rows: number, target?: TerminalTarget) => call<string>('term:open', hostId, cols, rows, target),
+    hasDocker: (id: string) => call<boolean>('term:hasDocker', id),
     screens: (id: string) => call<ScreenList>('term:screens', id),
     endScreen: (id: string, screenId: string) => call<void>('term:endScreen', id, screenId),
     write: (id: string, data: string) => call<void>('term:write', id, data),
     resize: (id: string, cols: number, rows: number) => call<void>('term:resize', id, cols, rows),
     close: (id: string) => call<void>('term:close', id)
+  },
+  docker: {
+    open: (hostId: string) => call<string>('docker:open', hostId),
+    overview: (id: string) => call<DockerOverview>('docker:overview', id),
+    stats: (id: string) => call<DockerStats[]>('docker:stats', id),
+    images: (id: string) => call<DockerImage[]>('docker:images', id),
+    inspect: (id: string, container: string) => call<DockerDetails>('docker:inspect', id, container),
+    action: (id: string, action: DockerAction, containers: string[]) => call<void>('docker:action', id, action, containers),
+    restartPolicy: (id: string, container: string, policy: DockerRestartPolicy) => call<void>('docker:restartPolicy', id, container, policy),
+    removeImage: (id: string, image: string) => call<void>('docker:removeImage', id, image),
+    close: (id: string) => call<void>('docker:close', id)
   },
   files: {
     open: (hostId: string) => call<string>('files:open', hostId),
