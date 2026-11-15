@@ -12,6 +12,7 @@ import type {
   TransferState
 } from '@shared/types'
 import { randomId } from './crypto'
+import { renameWhenFree } from './localfile'
 import { Throttle, type RemoteFs } from './remotefs'
 
 /** A download is written to this name first, so an existing file stays intact until the new one is complete. */
@@ -622,7 +623,8 @@ export class TransferQueue {
     }
     entry.resumeAt = offset
     await fs.download(entry.remote, part, { ...options, offset })
-    await rename(part, entry.local)
+    // On Windows the target may be open in another program; the part file stays, so retrying finishes it.
+    await renameWhenFree(part, entry.local)
     if (entry.batch?.preserve ?? this.host.settings().transferPreserve) {
       if (entry.mtime > 0) await utimes(entry.local, new Date(), new Date(entry.mtime)).catch(() => undefined)
       // The owner keeps access to what was just downloaded.

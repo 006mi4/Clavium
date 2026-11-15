@@ -10,6 +10,7 @@ import { listTime } from '../src/main/core/remotefs'
 import { classify, detectOffsetMinutes, localPathOf, type FilePair } from '../src/main/core/sync'
 import { FileManager, type Desktop } from '../src/main/files'
 import { newUnlockedVault, recordingPrompter, sshHost } from './helpers/fixtures'
+import { holdFile } from './helpers/holdFile'
 import { startTestSshServer, type TestSshServer } from './helpers/testServer'
 
 let srv: TestSshServer
@@ -426,6 +427,25 @@ describe('keeping a folder up to date', () => {
     writeFileSync(t.here('after-stop.txt'), 'x')
     await sleep(900)
     expect(existsSync(t.onServer('after-stop.txt'))).toBe(false)
+  })
+
+  it('waits for a file another program still holds, and uploads it once it is free', async () => {
+    const t = await setup()
+    await t.fm.watchStart(t.id, t.dir, t.local)
+    await sleep(200)
+    writeFileSync(t.here('budget.xlsx'), 'saved, but still open in the program')
+    const release = await holdFile(t.here('budget.xlsx'))
+    try {
+      // long enough for several attempts
+      await sleep(2500)
+      expect(existsSync(t.onServer('budget.xlsx'))).toBe(false)
+      expect(t.fm.watchList()[0]).toMatchObject({ failed: 0 })
+    } finally {
+      await release()
+    }
+    await until(() => existsSync(t.onServer('budget.xlsx')) && readFileSync(t.onServer('budget.xlsx'), 'utf8') === 'saved, but still open in the program')
+    await until(() => t.fm.watchList()[0]?.state === 'watching')
+    expect(t.fm.watchList()[0]).toMatchObject({ uploaded: 1, failed: 0 })
   })
 
   it('ends with the connection', async () => {

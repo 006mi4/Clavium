@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { DEFAULT_TRANSFER_SETTINGS, type ExternalEditStatus, type RemoteEntry } from '@shared/types'
 import { FileManager, type Desktop } from '../src/main/files'
 import { newUnlockedVault, recordingPrompter, sshHost } from './helpers/fixtures'
+import { holdFile } from './helpers/holdFile'
 import { startTestSshServer, type TestSshServer } from './helpers/testServer'
 
 let srv: TestSshServer
@@ -102,6 +103,25 @@ describe('editing in an external editor', () => {
     await until(() => !existsSync(dirname(two.localPath)))
     expect(t.fm.externalList()).toEqual([])
     expect(readFileSync(join(srv.root, 'one.txt'), 'utf8')).toBe('1')
+  })
+
+  it('waits while the program keeps the saved file to itself, then uploads it', async () => {
+    const t = await setup()
+    writeFileSync(join(srv.root, 'letter.txt'), 'draft')
+    const edit = await t.fm.externalEdit(t.id, await t.entry('/letter.txt'))
+    writeFileSync(edit.localPath, 'final, but the program has not let go yet')
+    const release = await holdFile(edit.localPath)
+    try {
+      // several looks at the file while it is held
+      await sleep(1800)
+      expect(readFileSync(join(srv.root, 'letter.txt'), 'utf8')).toBe('draft')
+      expect(t.state()).toMatchObject({ state: 'open', uploads: 0 })
+      expect(t.state().lastError).toBeUndefined()
+    } finally {
+      await release()
+    }
+    await until(() => readFileSync(join(srv.root, 'letter.txt'), 'utf8') === 'final, but the program has not let go yet')
+    await until(() => t.state().uploads === 1 && t.state().state === 'open')
   })
 
   it('a file name from the server cannot place the local copy outside its folder', async () => {

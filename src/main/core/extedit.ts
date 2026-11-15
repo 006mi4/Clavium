@@ -2,11 +2,14 @@ import { watch, type FSWatcher } from 'node:fs'
 import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ExternalEditStatus, RemoteEntry } from '@shared/types'
+import { readableNow } from './localfile'
 import { safeLocalName, type PairOutcome, type PairSpec } from './queue'
 import type { RemoteFs } from './remotefs'
 
 /** A program writes a file in several steps; wait until it is done. */
 const SETTLE_MS = 500
+/** How often to look again while the program still holds the file after saving (Windows). */
+const IN_USE_RETRIES = 60
 
 export interface ExternalEditHost {
   /** The session of the user, as it is connected right now. */
@@ -57,6 +60,7 @@ export class ExternalEdit {
   private timer: NodeJS.Timeout | null = null
   private stopped = false
   private busy = false
+  private heldTries = 0
   /** What the file on the server looked like after the last download or upload. */
   private remote = { size: -1, modifiedAt: -1 }
   /** What the local copy looked like when it was last in step with the server. */
@@ -94,23 +98,31 @@ export class ExternalEdit {
     }
   }
 
-  private schedule(): void {
+  private schedule(force = false): void {
     if (this.stopped) return
     if (this.timer) clearTimeout(this.timer)
-    this.timer = setTimeout(() => void this.sync(false), SETTLE_MS)
+    this.timer = setTimeout(() => void this.sync(force), SETTLE_MS)
   }
 
   /** Upload the local copy if it changed. `force` also replaces changes someone else made on the server. */
   async sync(force: boolean): Promise<void> {
     this.timer = null
     if (this.stopped) return
-    if (this.busy) return this.schedule()
+    if (this.busy) return this.schedule(force)
     this.busy = true
+    let again = false
     try {
       const st = await stat(this.status.localPath).catch(() => null)
       // In the middle of a save the file may be gone for a moment.
       if (!st?.isFile()) return
       if (!force && st.size === this.local.size && st.mtimeMs === this.local.mtimeMs) return
+      // Some programs keep the file to themselves for a while after saving. Wait for them.
+      if (!(await readableNow(this.status.localPath))) {
+        if (++this.heldTries > IN_USE_RETRIES) throw new Error('The program keeps the file locked. Close the file there, then upload again')
+        again = true
+        return
+      }
+      this.heldTries = 0
       const fs = this.host.fs()
       if (!force) {
         const now = await fs.stat(this.status.remote).catch(() => null)
@@ -135,7 +147,11 @@ export class ExternalEdit {
       this.status.lastError = (e as Error).message
     } finally {
       this.busy = false
-      if (!this.stopped) this.host.changed()
+      if (again) this.schedule(force)
+      else {
+        this.heldTries = 0
+        if (!this.stopped) this.host.changed()
+      }
     }
   }
 

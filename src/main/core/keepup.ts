@@ -2,6 +2,7 @@ import { watch, type FSWatcher } from 'node:fs'
 import { lstat } from 'node:fs/promises'
 import { basename, join, posix, sep } from 'node:path'
 import type { WatchStatus } from '@shared/types'
+import { readableNow } from './localfile'
 import type { PairOutcome, PairSpec } from './queue'
 import type { RemoteFs } from './remotefs'
 import { ignoredName } from './sync'
@@ -12,6 +13,9 @@ const SETTLE_MS = 400
 const WARMUP_MS = 2000
 /** How often a watch looks whether a lost connection is back. */
 const OFFLINE_RETRY_MS = 1500
+/** A file that another program still holds is looked at again after this time, this often. */
+const IN_USE_RETRY_MS = 1500
+const IN_USE_RETRIES = 20
 
 export interface KeepUpHost {
   /** The session of the user, as it is connected right now. */
@@ -39,6 +43,8 @@ export class FolderWatch {
   private stopped = false
   /** Folders (relative) that are known to exist on the server. */
   private knownDirs = new Set<string>([''])
+  /** Files that could not be read because a program holds them, with the number of attempts. */
+  private inUse = new Map<string, number>()
 
   constructor(
     id: string,
@@ -76,10 +82,10 @@ export class FolderWatch {
     this.schedule()
   }
 
-  private schedule(): void {
+  private schedule(ms = SETTLE_MS): void {
     if (this.stopped) return
     if (this.timer) clearTimeout(this.timer)
-    this.timer = setTimeout(() => void this.flush(), SETTLE_MS)
+    this.timer = setTimeout(() => void this.flush(), ms)
   }
 
   private async ensureRemoteDir(rel: string): Promise<void> {
@@ -114,6 +120,7 @@ export class FolderWatch {
     this.host.changed()
     const specs: PairSpec[] = []
     const wholeDirs: string[] = []
+    const held: string[] = []
     const problem = (name: string, e: unknown): void => {
       this.status.failed++
       this.status.lastError = `${name}: ${(e as Error).message}`
@@ -148,6 +155,12 @@ export class FolderWatch {
             const there = await this.host.fs().stat(remote).catch(() => null)
             // Already the same there (for instance a file that was just downloaded into this folder).
             if (there?.type === 'file' && there.size === st.size && there.modifiedAt && !there.timePrecision && Math.abs(there.modifiedAt - st.mtimeMs) <= 2000) continue
+            // Still being written or open in a program that shares it with nobody (Windows): later.
+            if (!(await readableNow(local))) {
+              held.push(rel)
+              continue
+            }
+            this.inUse.delete(rel)
             specs.push({ direction: 'upload', local, remote, size: st.size, modifiedAt: st.mtimeMs, mode: process.platform === 'win32' ? undefined : st.mode & 0o777 })
           }
         } catch (e) {
@@ -164,9 +177,21 @@ export class FolderWatch {
         })
       }
     } finally {
+      for (const rel of held) {
+        const attempts = (this.inUse.get(rel) ?? 0) + 1
+        if (attempts > IN_USE_RETRIES) {
+          this.inUse.delete(rel)
+          problem(rel, new Error('Another program keeps this file locked'))
+        } else {
+          this.inUse.set(rel, attempts)
+          this.pending.add(rel)
+        }
+      }
       this.busy = false
       this.status.state = 'watching'
       if (!this.stopped) this.host.changed()
+      // A change that arrives in the meantime shortens the wait, which is fine.
+      if (this.pending.size && !this.timer) this.schedule(held.length ? IN_USE_RETRY_MS : SETTLE_MS)
     }
   }
 }
