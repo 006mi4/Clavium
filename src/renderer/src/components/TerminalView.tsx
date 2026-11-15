@@ -391,7 +391,7 @@ export function TerminalView(props: {
           </button>
         )}
         {!props.target && screens?.installed && state === 'connected' && (
-          <button className="btn" title="Programs that keep running on the server (GNU screen)" aria-label={count ? `Screens, ${count} running` : 'Screens'} onClick={(e) => void openScreensMenu(e)}>
+          <button className="btn" title="Programs that keep running on the server (GNU screen)" aria-label={count ? `Screens · ${count}` : 'Screens'} onClick={(e) => void openScreensMenu(e)}>
             <Layers size={14} /> <span className="btn-text">Screens{count ? ` · ${count}` : ''}</span>
           </button>
         )}
