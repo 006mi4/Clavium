@@ -75,11 +75,20 @@ jobs:
             dist/Clavium-Setup-*.exe
             dist/Clavium-*-portable.exe
 
+      # The download button in the README points at releases/latest/download/Clavium-Setup.exe,
+      # so every release also carries the installer under a name without the version.
+      - name: Installer under a fixed name
+        shell: pwsh
+        run: |
+          $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          Copy-Item "dist/Clavium-Setup-$v.exe" dist/Clavium-Setup.exe
+
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
+            dist/Clavium-Setup.exe
             dist/Clavium-Setup-*.exe
             dist/Clavium-Setup-*.exe.blockmap
             dist/Clavium-*-portable.exe
@@ -143,10 +152,15 @@ jobs:
             dist/Clavium-*-mac.dmg
             dist/Clavium-*-mac.zip
 
+      # For the download button in the README (releases/latest/download/Clavium-mac.dmg).
+      - name: Disk image under a fixed name
+        run: cp dist/Clavium-*-mac.dmg dist/Clavium-mac.dmg
+
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           fail_on_unmatched_files: true
           files: |
+            dist/Clavium-mac.dmg
             dist/Clavium-*-mac.dmg
             dist/Clavium-*-mac.zip
             dist/Clavium-*-mac.zip.blockmap

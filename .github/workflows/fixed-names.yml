@@ -1,0 +1,36 @@
+name: Fixed download names
+
+# Adds Clavium-Setup.exe and Clavium-mac.dmg to an existing release. The download buttons in the
+# README point at releases/latest/download/<these names>. New releases get the two files from the
+# Release workflow; this one is for a release that was published before that, or to repair one.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, for example v0.1.8
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  copy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # add files to the release
+    steps:
+      - name: Copy the installer and the disk image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Not a release tag: $TAG" >&2
+            exit 1
+          fi
+          v="${TAG#v}"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "Clavium-Setup-$v.exe" --pattern "Clavium-$v-mac.dmg"
+          mv "Clavium-Setup-$v.exe" Clavium-Setup.exe
+          mv "Clavium-$v-mac.dmg" Clavium-mac.dmg
+          gh release upload "$TAG" Clavium-Setup.exe Clavium-mac.dmg --repo "$GITHUB_REPOSITORY" --clobber
