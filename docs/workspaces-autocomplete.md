@@ -1,6 +1,6 @@
 # Terminal suggestions and workspaces
 
-Part of Clavium since 0.1.11. What is marked "after 0.1.11" is on `main` and not released yet.
+Part of Clavium since 0.1.11. What is marked "since 0.1.12" came with that version.
 
 ## What is built
 
@@ -10,7 +10,7 @@ Part of Clavium since 0.1.11. What is marked "after 0.1.11" is on `main` and not
 - The line is read from the screen of the terminal (from the place where the first key of a line was typed
   up to the cursor), never from the keys. Text typed without echo is never seen.
 - Sources: programs in `PATH` of the server, subcommands and options of about 130 common commands (the long
-  spellings of the options of the GNU tools after 0.1.11), files and
+  spellings of the options of the GNU tools since 0.1.12), files and
   folders, git branches and remotes, systemd units, docker containers and images, hosts of `~/.ssh/config`,
   users, processes, network interfaces, and the shell history (read once per connection, kept in memory).
 - Everything that comes from the server is fetched with read-only commands on a channel next to the shell
@@ -23,9 +23,9 @@ Part of Clavium since 0.1.11. What is marked "after 0.1.11" is on `main` and not
 - Tab and Enter wait until the characters typed so far have come back from the server, so a fast typist never
   gets a suggestion that belongs to an older state of the line.
 - `Ctrl+Space` opens the list where nothing is typed yet: the last commands on an empty line, the programs
-  after `sudo ` or a pipe. The key itself does not reach the shell (after 0.1.11).
+  after `sudo ` or a pipe. The key itself does not reach the shell (since 0.1.12).
 - A line is remembered for the session once all of it has come back from the server, and only as long as it
-  was typed: a prompt at the right edge or a suggestion of the shell in grey is not part of it (after 0.1.11).
+  was typed: a prompt at the right edge or a suggestion of the shell in grey is not part of it (since 0.1.12).
 - Off for screens, container logs and shells inside containers. Setting: "Suggestions in the terminal".
 
 **Workspaces** (`src/shared/layout.ts`, `src/renderer/src/App.tsx`, `src/renderer/src/components/Workspaces.tsx`)
@@ -39,7 +39,7 @@ Part of Clavium since 0.1.11. What is marked "after 0.1.11" is on `main` and not
 - Shortcuts: `Ctrl+Shift+D` split right, `Ctrl+Shift+E` split down, `Ctrl+Shift+Enter` focus mode,
   `Ctrl+Alt+Arrow` move between panes (Cmd instead of Ctrl on macOS). `Ctrl+Shift+W` now closes the focused pane.
 
-After 0.1.11:
+Since 0.1.12:
 
 - A terminal comes back in the folder its shell was in, after a restart and when a workspace is opened. The
   folder is asked for a moment after every line that is sent (the same read-only question the suggestions
@@ -75,7 +75,7 @@ With 0.1.11, in the built app against OpenSSH 9.6 on Ubuntu with bash:
 - A saved workspace with four panes opens again from the library, and the tabs of the last session come back after a
   restart with the same divider position and focus mode.
 
-After 0.1.11, in the built app against OpenSSH 9.6 on Ubuntu:
+With 0.1.12, in the built app against OpenSSH 9.6 on Ubuntu:
 
 - zsh 5.9 with zsh-autosuggestions, zsh-syntax-highlighting and a prompt on the right, and fish 3.7: folders,
   files with spaces and umlauts, git subcommands and branches, insertion with Tab, the list on an empty line.
