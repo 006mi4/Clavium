@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { Container, FolderOpen, Layers, Plus, Power, RotateCw, X } from 'lucide-react'
+import { Container, FolderOpen, Keyboard, Layers, Plus, Power, RotateCw, X } from 'lucide-react'
 import type { HostSummary, ScreenList, TerminalTarget } from '@shared/types'
 import { api, on } from '../api'
 import { IconButton, Sheet, Toolbar, useConfirm, useDarkMode, useMenu, useToast, type MenuItem } from '../ui'
 import { useTerminalSuggest } from './TerminalSuggest'
+import { registerTerminal, sendToTerminals } from '../terminalBus'
 
 export type ConnState = 'connecting' | 'connected' | 'closed' | 'error'
 
@@ -82,6 +83,13 @@ export function TerminalView(props: {
   startDir?: string
   /** told the folder of the shell after every command, when it changed; left out: nobody wants to know */
   onCwd?: (cwd: string) => void
+  /** the pane this terminal is in; other terminals address it by this */
+  paneId: string
+  /** "type into all terminals" is on: the panes that get what is typed here */
+  mirror?: readonly string[]
+  onStopMirror?: () => void
+  /** asked for when a screen or a container is gone: show a plain terminal on the host instead */
+  onPlain?: () => void
   onOpenFiles: () => void
   onOpenScreen: (screen: { target: TerminalTarget; name: string }) => void
   onOpenDocker: () => void
@@ -108,7 +116,11 @@ export function TerminalView(props: {
   const dark = useDarkMode()
   const wrapRef = useRef<HTMLDivElement>(null)
   // Suggestions are for the prompt of a shell: not for a screen, a log or a shell inside a container.
-  const suggest = useTerminalSuggest({ term: termRef, session: sessionRef, wrap: wrapRef, enabled: props.autocomplete && !props.target })
+  // And not while the keys go to several terminals: an entry taken from the list would only fit this one.
+  const mirroring = (props.mirror?.length ?? 0) > 0
+  const suggest = useTerminalSuggest({ term: termRef, session: sessionRef, wrap: wrapRef, enabled: props.autocomplete && !props.target && !mirroring })
+  const mirrorRef = useRef<readonly string[]>([])
+  mirrorRef.current = props.mirror ?? []
   const suggestRef = useRef(suggest)
   suggestRef.current = suggest
   // Where the shell is, so that the terminal can start there again. Asked a moment after a line was
@@ -183,6 +195,7 @@ export function TerminalView(props: {
         if (!sessionRef.current || !t) return
         suggestRef.current.onInput(t)
         void api.term.write(sessionRef.current, t)
+        sendToTerminals(mirrorRef.current, t)
         if (/[\r\n]/.test(t)) followCwd(800)
       })
     }
@@ -219,7 +232,14 @@ export function TerminalView(props: {
       if (!sessionRef.current) return
       suggestRef.current.onInput(d)
       void api.term.write(sessionRef.current, d)
+      sendToTerminals(mirrorRef.current, d)
       if (d.includes('\r')) followCwd(800)
+    })
+    // what is typed into another terminal of the tab while "type into all terminals" is on
+    const leaveBus = registerTerminal(props.paneId, (d) => {
+      if (!sessionRef.current) return
+      void api.term.write(sessionRef.current, d)
+      if (/[\r\n]/.test(d)) followCwd(800)
     })
     const parsedSub = term.onWriteParsed(() => suggestRef.current.onOutput())
     const resizeSub = term.onResize(({ cols, rows }) => {
@@ -239,6 +259,7 @@ export function TerminalView(props: {
 
     return () => {
       ro.disconnect()
+      leaveBus()
       if (cwdTimer.current) clearTimeout(cwdTimer.current)
       offData()
       offExit()

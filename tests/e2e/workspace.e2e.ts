@@ -223,6 +223,34 @@ describe('workspaces and terminal suggestions', () => {
     expect(srv.logins).toBe(logins + 2)
   })
 
+  it('types into all terminals of the tab at once, until that is switched off', async () => {
+    const bar = (): Locator => page.locator('.reconnect-bar', { hasText: 'What you type here also goes to' })
+    await panes().nth(0).getByRole('button', { name: 'Split View and Workspace' }).click()
+    await page.locator('.menu button', { hasText: 'Type into All 3 Terminals of This Tab' }).click()
+    // every terminal says so, and each has a way to stop it
+    await expect.poll(() => bar().count()).toBe(3)
+    expect(await panes().nth(0).locator('.reconnect-bar').innerText()).toContain('the 2 other terminals')
+
+    const before = srv.typed.length
+    await panes().nth(0).locator('.xterm').click()
+    await page.keyboard.type('git st')
+    for (let i = 0; i < 3; i++) await terminal(panes().nth(i), '$ git st').waitFor()
+    // an entry of the list would only fit one of the terminals: there is no list meanwhile
+    await page.waitForTimeout(300)
+    expect(await page.getByRole('listbox', { name: 'Suggestions' }).count()).toBe(0)
+    await page.keyboard.press('Enter')
+    for (let i = 0; i < 3; i++) await terminal(panes().nth(i), 'echo:git st').waitFor()
+    expect(srv.typed.slice(before)).toEqual(['git st', 'git st', 'git st'])
+
+    await panes().nth(1).locator('.reconnect-bar').getByRole('button', { name: 'Stop' }).click()
+    await expect.poll(() => bar().count()).toBe(0)
+    await panes().nth(0).locator('.xterm').click()
+    await page.keyboard.type('whoami')
+    await page.keyboard.press('Enter')
+    await terminal(panes().nth(0), 'echo:whoami').waitFor()
+    expect(srv.typed.slice(before + 3)).toEqual(['whoami'])
+  })
+
   it('saves the tab as a workspace and opens it again from the library', async () => {
     // The folder of a shell is asked for a moment after a line was sent. It is part of what is
     // saved, so wait until the app knows it for the first terminal.

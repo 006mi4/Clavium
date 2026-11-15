@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
-import { ArrowDownCircle, ArrowLeftRight, Columns2, Container, ExternalLink, FolderOpen, History, KeyRound, Layers, Lock, PanelsTopLeft, Rows2, Save, Server, Settings, ShieldCheck, Sparkles, SquareTerminal, X } from 'lucide-react'
+import { ArrowDownCircle, ArrowLeftRight, Columns2, Container, ExternalLink, FolderOpen, History, Keyboard, KeyRound, Layers, Lock, PanelsTopLeft, Rows2, Save, Server, Settings, ShieldCheck, Sparkles, SquareTerminal, X } from 'lucide-react'
 import type { ActiveForward, EditorFileInfo, EditorRequest, HostSummary, PaneKind, SavedWorkspace, SessionSnapshot, SshKeySummary, TerminalTarget, UpdateState, VaultState, WorkspaceTab } from '@shared/types'
 import { MAX_PANES, dividers, filterLayout, mapLayout, neighbor, paneRects, panes, removePane, setRatio, splitPane, type Divider, type Layout, type Rect, type SplitDir } from '@shared/layout'
 import { api, on, type UiSettings } from './api'
@@ -44,6 +44,8 @@ interface Tab {
   focus: string
   /** focus mode: only the focused pane is shown */
   zoomed: boolean
+  /** what is typed into one terminal of the tab goes to all of them; never saved */
+  broadcast?: boolean
 }
 
 const FULL: Rect = { x: 0, y: 0, w: 1, h: 1 }
@@ -313,6 +315,15 @@ export function App() {
     if (panes(tab.layout).length > 1) {
       items.push('separator')
       items.push({ label: 'Move to a Tab of Its Own', icon: ExternalLink, onSelect: () => detach(tab.id, s.id) })
+    }
+    const terminals = panes(tab.layout).filter((id) => sessions.find((x) => x.id === id)?.kind === 'terminal').length
+    if (terminals > 1) {
+      items.push('separator')
+      items.push({
+        label: tab.broadcast ? 'Stop Typing into All Terminals' : `Type into All ${terminals} Terminals of This Tab`,
+        icon: Keyboard,
+        onSelect: () => patchTab(tab.id, (t) => ({ broadcast: !t.broadcast }))
+      })
     }
     items.push('separator')
     if (tab.workspaceId) {
@@ -606,6 +617,8 @@ export function App() {
           const focused = active === tab.id && tab.focus === s.id
           // only the pane in the top right corner has to keep clear of the window buttons
           const corner = rect.y < 0.001 && rect.x + rect.w > 0.999
+          // the other terminals of the tab, while what is typed goes to all of them
+          const others = tab.broadcast && s.kind === 'terminal' ? panes(tab.layout).filter((id) => id !== s.id && sessions.find((x) => x.id === id)?.kind === 'terminal') : []
           return (
             <div
               key={s.id}
@@ -627,6 +640,10 @@ export function App() {
                     onState={(st) => setSessionState(s.id, st)}
                     target={s.target}
                     startDir={s.cwd}
+                    paneId={s.id}
+                    mirror={others}
+                    onStopMirror={() => patchTab(tab.id, { broadcast: false })}
+                    onPlain={() => setSessions((list) => list.map((x) => (x.id === s.id ? { ...x, target: undefined } : x)))}
                     onCwd={(cwd) => setCwd(s.id, cwd)}
                     onOpenFiles={() => open('files', s.host)}
                     onOpenScreen={(screen) => open('terminal', s.host, true, screen)}

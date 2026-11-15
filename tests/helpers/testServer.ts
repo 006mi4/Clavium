@@ -21,6 +21,8 @@ export interface TestSshServer {
   logins: number
   /** answers commands that are run without a terminal; undefined: the default answer "ran: <command>" */
   onExec?: (command: string) => string | undefined
+  /** everything typed into the shells of this server, in the order it arrived */
+  typed: string[]
   /** cut every open connection, as a network failure would; the server keeps running */
   dropClients(): void
   close(): Promise<void>
@@ -59,6 +61,7 @@ export async function startTestSshServer(hostKey?: string): Promise<TestSshServe
   const setstat: TestSshServer['setstat'] = []
   const chown: TestSshServer['chown'] = []
   const tunnels: TestSshServer['tunnels'] = []
+  const typed: string[] = []
   const clients = new Set<Connection>()
   const state = { logins: 0 }
   let api = {} as TestSshServer
@@ -100,6 +103,7 @@ export async function startTestSshServer(hostKey?: string): Promise<TestSshServe
           stream.on('data', (d: Buffer) => {
             for (const ch of d.toString('utf8')) {
               if (ch === '\r' || ch === '\n') {
+                if (line) typed.push(line)
                 stream.write(`\r\necho:${line}\r\n$ `)
                 if (line === 'exit') {
                   stream.exit(0)
@@ -268,6 +272,7 @@ export async function startTestSshServer(hostKey?: string): Promise<TestSshServe
     setstat,
     chown,
     tunnels,
+    typed,
     get logins() {
       return state.logins
     },
