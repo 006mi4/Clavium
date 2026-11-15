@@ -752,3 +752,65 @@ export type MonitorSample =
       temps: MonitorTemp[]
       gpus: MonitorGpu[]
     }
+
+export interface MonitorProcess {
+  pid: number
+  ppid: number
+  /** the short name the kernel keeps (15 characters) */
+  name: string
+  /** the whole command line; empty for threads of the kernel and where it is not readable */
+  command: string
+  uid: number | null
+  /** the name of the user, or "uid 1001" where the server has no name for it */
+  user: string
+  /** R running, S sleeping, D waiting for a disk, Z ended but not collected, T stopped */
+  state: string
+  /** percent of one processor since the measurement before; 100 is one whole core; null in the first one */
+  cpu: number | null
+  /** bytes of memory it really holds */
+  memory: number
+  /** when it started, as the kernel counts it: tells a process from a later one with the same number */
+  start: string
+  /** a thread of the kernel: cannot be ended */
+  kernel: boolean
+  /** runs as the user of this connection */
+  own: boolean
+  /** this connection runs through it: ending it ends the monitor */
+  connection: boolean
+}
+
+export interface MonitorPort {
+  protocol: 'tcp' | 'udp'
+  port: number
+  addresses: string[]
+  /** all: every network of the server · local: only programs on the server itself · address: only the listed addresses */
+  scope: 'all' | 'local' | 'address'
+  /** the user the port belongs to: always known */
+  uid: number | null
+  user: string
+  /** the processes that hold it; empty unless `holder` is "known" */
+  pids: number[]
+  /** the one to end: the process the others were started by */
+  pid: number | null
+  /**
+   * known: see pids · hidden: a program of another user, which this user may not see ·
+   * kernel: the system itself, no program · none: no program was found
+   */
+  holder: 'known' | 'hidden' | 'kernel' | 'none'
+  /** what usually uses this port, as a hint; null for ports without a usual use */
+  usual: string | null
+}
+
+export type MonitorSignal = 'TERM' | 'KILL'
+
+export type MonitorActivity =
+  | { supported: false; os: string }
+  | {
+      supported: true
+      processes: MonitorProcess[]
+      ports: MonitorPort[]
+      self: { uid: number | null; user: string; root: boolean }
+      /** the server shows this user only its own processes */
+      hidden: boolean
+      memTotal: number
+    }

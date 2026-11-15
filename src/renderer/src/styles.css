@@ -856,3 +856,33 @@ kbd { font: 11.5px var(--mono); padding: 2px 6px; border-radius: 5px; background
 .mon-table thead th { color: var(--text-2); font-weight: 600; }
 .mon-table th[scope='row'] { text-align: left; }
 .mon > .caption { margin-top: 14px; max-width: 620px; }
+
+/* monitor: the lists of processes and ports */
+.mon-act { display: flex; flex-direction: column; gap: 12px; }
+.mon-stale { margin: 14px 24px 0; }
+.mon-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.mon-bar .search { width: min(100%, 300px); }
+.mon-bar .btn[aria-pressed='true'] { background: var(--selection); color: var(--accent); border-color: transparent; }
+.mon-count { color: var(--text-2); font-size: 12px; margin-left: auto; font-variant-numeric: tabular-nums; }
+.mon-scroll { overflow-x: auto; background: var(--bg-group); border: 1px solid var(--line); border-radius: var(--r-group); }
+.mon-scroll:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.mon-list { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.mon-list thead th { text-align: left; font-weight: 500; font-size: 11.5px; color: var(--text-2); padding: 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.mon-list thead th:not(:has(button)) { padding: 8px 12px; }
+.mon-list thead th button { display: inline-flex; align-items: center; gap: 4px; width: 100%; padding: 8px 12px; border: none; background: none; font: inherit; color: inherit; cursor: default; border-radius: 4px; }
+.mon-list thead th.num button { justify-content: flex-end; }
+.mon-list thead th button:hover { color: var(--text); }
+.mon-list thead th[aria-sort='ascending'] button, .mon-list thead th[aria-sort='descending'] button { color: var(--text); font-weight: 600; }
+.mon-list tbody th, .mon-list td { padding: 7px 12px; border-bottom: 1px solid var(--line); text-align: left; font-weight: 400; vertical-align: top; }
+.mon-list tbody tr:last-child th, .mon-list tbody tr:last-child td { border-bottom: none; }
+.mon-list tbody tr:hover { background: var(--fill); }
+.mon-list .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mon-list .dim { color: var(--text-2); }
+.mon-list .act { width: 36px; padding: 3px 8px 3px 0; text-align: right; }
+.mon-name { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-weight: 600; }
+.mon-cmd { display: block; color: var(--text-2); font-size: 11.5px; margin-top: 2px; max-width: 52ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mon-badge { font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 5px; background: var(--fill-active); color: var(--text); white-space: nowrap; }
+.mon-port { font: 600 14px var(--font-display); font-variant-numeric: tabular-nums; }
+.mon-reach { font-weight: 600; }
+.mon-unknown { color: var(--text-2); display: block; max-width: 44ch; }
+.mon-act > .caption { max-width: 720px; }

@@ -55,6 +55,8 @@ export const INVOKE_CHANNELS = [
   'docker:close',
   'monitor:open',
   'monitor:sample',
+  'monitor:activity',
+  'monitor:signal',
   'monitor:close',
   'files:open',
   'files:home',

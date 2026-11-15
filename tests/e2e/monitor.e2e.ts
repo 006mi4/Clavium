@@ -64,6 +64,51 @@ function linuxAnswer(n: number): string {
   ].join('\n')
 }
 
+/** What runs on the pretend server. Ending a process removes it here, as it would there. */
+const running = new Set([1, 2, 800, 900, 901, 1200, 1201, 1500, 1600])
+const signals: string[] = []
+let looked = 0
+function procStat(pid: number, name: string, ppid: number, used: number, kernel = false): string {
+  const f = new Array<string | number>(50).fill(0)
+  f[0] = ppid
+  f[5] = kernel ? 0x00200040 : 0x400000
+  f[10] = used
+  f[18] = pid * 10
+  return `${pid} (${name}) S ${f.join(' ')}`
+}
+function activityAnswer(n: number): string {
+  const all: [number, string][] = [
+    [1, `0 12000 ${procStat(1, 'systemd', 0, 500)}`],
+    [2, `0 0 ${procStat(2, 'kthreadd', 0, 0, true)}`],
+    [800, `0 9000 ${procStat(800, 'sshd', 1, 10)}`],
+    [900, `1000 7000 ${procStat(900, 'sshd', 800, 10)}`],
+    [901, `1000 1500 ${procStat(901, 'sh', 900, 1)}`],
+    [1200, `0 250000 ${procStat(1200, 'nginx', 1, 4000 + n * 60)}`],
+    [1201, `33 90000 ${procStat(1201, 'nginx', 1200, 100 + n * 30)}`],
+    [1500, `1000 480000 ${procStat(1500, 'node', 1, 2000 + n * 300)}`],
+    [1600, `0 3000000 ${procStat(1600, 'postgres', 1, 900 + n * 6)}`]
+  ]
+  const head = (pid: number, c: string): string => `==> /proc/${pid}/cmdline <==\n${c}`
+  return [
+    '##self', '901 1000',
+    '##cpu', `cpu  ${100000 + n * 1200} 0 0 0 0 0 0 0 0 0`, '4',
+    '##mem', 'MemTotal:       16000000 kB',
+    '##hide', 'proc /proc proc rw,relatime 0 0',
+    '##passwd', 'root:0', 'www-data:33', 'tester:1000',
+    '##proc', ...all.filter(([pid]) => running.has(pid)).map(([, line]) => line),
+    '##tcp',
+    '   0: 00000000:0016 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 5001 1 0 100 0 0 10 0',
+    ...(running.has(1500) ? ['   1: 00000000:0BB8 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 5003 1 0 100 0 0 10 0'] : []),
+    '   2: 0100007F:1538 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 5004 1 0 100 0 0 10 0',
+    '##tcp6', '   0: 00000000000000000000000000000000:0016 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 5005 1 0 100 0 0 10 0',
+    '##udp', '##udp6',
+    '##ss', 'found', 'tcp LISTEN 0 511 0.0.0.0:3000 0.0.0.0:* users:(("node",pid=1500,fd=21)) ino:5003',
+    '##fd',
+    '##cmd', [head(1, '/sbin/init\0'), head(2, ''), head(1200, 'nginx: master process /usr/sbin/nginx\0'), head(1500, 'node\0/srv/app/server.js\0'), head(1600, 'postgres\0-D\0/var/lib/postgresql\0')].join('\n'),
+    '', '##end', ''
+  ].join('\n')
+}
+
 async function launch(): Promise<void> {
   app = await _electron.launch({
     executablePath: electronPath,
@@ -79,6 +124,14 @@ async function launch(): Promise<void> {
 beforeAll(async () => {
   srv = await startTestSshServer()
   srv.onExec = (command) => {
+    const kill = /(sudo -n )?kill -(TERM|KILL) (\d+)$/.exec(command.replace(/'$/, ''))
+    if (kill) {
+      signals.push(`${kill[1] ? 'sudo ' : ''}${kill[2]} ${kill[3]}`)
+      if (kill[1]) return { err: 'sudo: a password is required\n', code: 1 }
+      running.delete(Number(kill[3]))
+      return ''
+    }
+    if (command.includes('##proc')) return system === 'bsd' ? '##unsupported\nFreeBSD\n' : activityAnswer(looked++)
     if (command.includes('##unsupported')) return system === 'bsd' ? '##unsupported\nFreeBSD\n' : linuxAnswer(measured++)
     if (command.includes('__clavium_ctx__')) return '__clavium_ctx__\nbash\n/srv\n/home/tester\n'
     return undefined
@@ -203,6 +256,89 @@ describe('monitor of a server', () => {
     const scroll = pane.locator('.view-scroll')
     await expect.poll(() => scroll.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0)
     await page.setViewportSize({ width: 1280, height: 800 })
+  })
+
+  it('lists processes with their load, and ends one after asking', async () => {
+    const pane = panes()
+    await pane.getByRole('button', { name: 'Processes', exact: true }).click()
+    const table = pane.getByRole('region', { name: 'Processes' }).getByRole('table')
+    const row = (name: string): Locator => table.getByRole('row').filter({ has: page.getByRole('rowheader', { name: new RegExp(`^${name}`) }) })
+    await row('node').waitFor()
+    // shares need two readings; node used 300 of the 300 ticks one core had: one whole core
+    await expect.poll(() => row('node').first().innerText(), { timeout: 10000 }).toMatch(/tester\s+100 %\s+469 MB · 3\.0 %\s+1500/)
+    // sorted by processor, highest first
+    expect(await table.getByRole('rowheader').first().innerText()).toMatch(/^node/)
+    expect(await table.getByRole('columnheader', { name: 'Processor' }).getAttribute('aria-sort')).toBe('descending')
+    expect(await row('node').first().innerText()).toContain('node /srv/app/server.js')
+    // what cannot be ended offers no actions: the first process, threads of the kernel
+    expect(await row('systemd').getByRole('button').count()).toBe(0)
+    expect(await row('\\[kthreadd\\]').getByRole('button').count()).toBe(0)
+    expect(await row('sh').innerText()).toContain('this connection')
+    expect(await pane.getByRole('status').first().innerText()).toBe('9 processes')
+
+    await table.getByRole('columnheader', { name: 'Memory' }).getByRole('button').click()
+    expect(await table.getByRole('rowheader').first().innerText()).toMatch(/^postgres/)
+    await pane.getByLabel('Search processes').fill('nginx')
+    await expect.poll(() => table.getByRole('row').count()).toBe(3)
+    expect(await pane.getByRole('status').first().innerText()).toBe('2 of 9 processes')
+    await pane.getByLabel('Search processes').fill('')
+    await pane.getByRole('button', { name: 'Only Mine' }).click()
+    await expect.poll(() => table.getByRole('rowheader').allInnerTexts().then((t) => t.map((x) => x.split(/\s/)[0]).sort())).toEqual(['node', 'sh', 'sshd'])
+    await pane.getByRole('button', { name: 'Only Mine' }).click()
+    await page.screenshot({ path: join(shots, '17-monitor-processes.png') })
+
+    // a process of another user: sudo is tried, and its refusal is explained
+    await row('postgres').getByRole('button', { name: 'Actions for postgres, process 1600' }).click()
+    await page.getByRole('menuitem', { name: 'End…' }).click()
+    const dialog = page.getByRole('alertdialog').or(page.getByRole('dialog'))
+    expect(await dialog.innerText()).toContain('It belongs to root, not to tester')
+    await dialog.getByRole('button', { name: 'End', exact: true }).click()
+    await page.getByText('only use sudo with a password').waitFor()
+    expect(signals).toEqual(['sudo TERM 1600'])
+    await row('postgres').waitFor()
+
+    // the user's own process, with the keyboard
+    await row('node').first().getByRole('button', { name: /Actions for node/ }).focus()
+    await page.keyboard.press('Enter')
+    await page.getByRole('menuitem', { name: 'Force Quit…' }).click()
+    expect(await dialog.innerText()).toContain('stopped at once')
+    expect(await dialog.innerText()).not.toContain('sudo')
+    await dialog.getByRole('button', { name: 'Force Quit' }).click()
+    await expect.poll(() => row('node').count(), { timeout: 8000 }).toBe(0)
+    expect(signals).toEqual(['sudo TERM 1600', 'KILL 1500'])
+  })
+
+  it('lists open ports with owner and program, and says what this user may not see', async () => {
+    running.add(1500)
+    const pane = panes()
+    await pane.getByRole('button', { name: 'Ports', exact: true }).click()
+    const table = pane.getByRole('region', { name: 'Open ports' }).getByRole('table')
+    const row = (port: number): Locator => table.getByRole('row').filter({ has: page.getByRole('rowheader', { name: new RegExp(`^${port}\\b`) }) })
+    await expect.poll(() => row(3000).count(), { timeout: 10000 }).toBe(1)
+    // the user's own program is named; IPv4 and IPv6 of sshd are one line, its program is hidden
+    expect(await row(3000).innerText()).toMatch(/3000\s+TCP\s+usually a web app\s+Every network\s+0\.0\.0\.0\s+node\s+node \/srv\/app\/server\.js\s+tester/)
+    expect(await row(22).innerText()).toMatch(/22\s+TCP\s+usually SSH\s+Every network\s+0\.0\.0\.0, ::\s+A program of root\. tester may not see which one\.\s+root/)
+    expect(await row(5432).innerText()).toMatch(/This server only\s+127\.0\.0\.1/)
+    expect(await pane.locator('.note').innerText()).toContain('2 ports belong to other users')
+    await page.screenshot({ path: join(shots, '18-monitor-ports.png') })
+
+    // a port whose program is hidden offers nothing that would need the program
+    await row(22).getByRole('button', { name: 'Actions for port 22 (TCP)' }).click()
+    expect(await page.getByRole('menuitem').allInnerTexts()).toEqual(['Copy Port'])
+    await page.keyboard.press('Escape')
+
+    await row(3000).getByRole('button', { name: 'Actions for port 3000 (TCP)' }).click()
+    await page.getByRole('menuitem', { name: 'Show in Processes' }).click()
+    const processes = pane.getByRole('region', { name: 'Processes' }).getByRole('table')
+    await expect.poll(() => processes.getByRole('rowheader').allInnerTexts().then((t) => t.map((x) => x.split(/\s/)[0]))).toEqual(['node'])
+
+    await pane.getByRole('button', { name: 'Ports', exact: true }).click()
+    await row(3000).getByRole('button', { name: 'Actions for port 3000 (TCP)' }).click()
+    await page.getByRole('menuitem', { name: 'End “node”…' }).click()
+    await page.getByRole('alertdialog').or(page.getByRole('dialog')).getByRole('button', { name: 'End', exact: true }).click()
+    await expect.poll(() => row(3000).count(), { timeout: 8000 }).toBe(0)
+    expect(signals.at(-1)).toBe('TERM 1500')
+    await pane.getByRole('button', { name: 'Overview', exact: true }).click()
   })
 
   it('opens next to a terminal and comes back after a restart', async () => {

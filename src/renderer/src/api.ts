@@ -17,7 +17,9 @@ import type {
   DockerRestartPolicy,
   ChmodOptions,
   DockerStats,
+  MonitorActivity,
   MonitorSample,
+  MonitorSignal,
   ExistingRule,
   ExternalEditStatus,
   FolderSize,
@@ -137,6 +139,8 @@ export const api = {
   monitor: {
     open: (hostId: string) => call<string>('monitor:open', hostId),
     sample: (id: string) => call<MonitorSample>('monitor:sample', id),
+    activity: (id: string) => call<MonitorActivity>('monitor:activity', id),
+    signal: (id: string, pid: number, start: string, signal: MonitorSignal, sudo: boolean) => call<void>('monitor:signal', id, pid, start, signal, sudo),
     close: (id: string) => call<void>('monitor:close', id)
   },
   files: {

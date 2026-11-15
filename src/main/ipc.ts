@@ -423,6 +423,12 @@ export function registerIpc(ctx: IpcContext): void {
   // monitor
   handle('monitor:open', z.tuple([id]), (hostId) => ctx.monitor.open(host(hostId)))
   handle('monitor:sample', z.tuple([id]), (mid) => ctx.monitor.sample(mid))
+  handle('monitor:activity', z.tuple([id]), (mid) => ctx.monitor.activity(mid))
+  handle(
+    'monitor:signal',
+    z.tuple([id, z.number().int().min(2).max(4194304), z.string().regex(/^\d{1,20}$/), z.enum(['TERM', 'KILL']), z.boolean()]),
+    (mid, pid, start, signal, sudo) => ctx.monitor.signal(mid, pid, start, signal, sudo)
+  )
   handle('monitor:close', z.tuple([id]), (mid) => ctx.monitor.close(mid))
   handle('term:write', z.tuple([id, z.string().max(1024 * 1024)]), (sid, data) => ctx.terminals.write(sid, data))
   handle('term:resize', z.tuple([id, cols, rows]), (sid, c, r) => ctx.terminals.resize(sid, c, r))

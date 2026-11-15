@@ -52,3 +52,57 @@ is stored: the history of 5 minutes lives in the memory of the page.
 - The cache segment of the memory bar is below 3:1 against its neighbours. Its value is written next to it.
 - Network: bridges, VPN and container interfaces are left out so traffic is not counted twice. On a server
   that only has such an interface, the network card shows nothing.
+
+## Processes and ports (second step)
+
+Two more tabs in the monitor. Code: `src/main/core/activity.ts` (command, parser, ending a process),
+`src/renderer/src/components/MonitorActivity.tsx` (both lists), IPC `monitor:activity` and `monitor:signal`.
+The answer is only asked for while one of the two tabs is shown, every 4 seconds.
+
+### Where the lists come from
+
+- Processes: `/proc/<pid>/stat` and `/proc/<pid>/status`, read with builtins of the shell (no `ps`, whose
+  columns differ under BusyBox). Memory is `VmRSS` in kB, so the page size does not matter. The share of the
+  processor compares the ticks of a process with the ticks of all processors, so `CLK_TCK` does not matter.
+  Command lines come from one `head -n 1 /proc/[0-9]*/cmdline`.
+- Ports: `/proc/net/tcp`, `tcp6`, `udp`, `udp6`. These give port, address, the owning user and the inode of
+  the socket to every user. Which process holds a socket comes from `ss -tulnpe` (matched by inode), or from
+  `ls -l /proc/*/fd` where there is no `ss`.
+
+### Rights, and what the page says about them
+
+- Nothing is read with sudo. sudo writes every call to the log of the server, and the lists are read every
+  few seconds.
+- `/proc` mounted with `hidepid`: the user sees only its own processes. The page says so in a note.
+- Programs behind ports of other users are invisible without root. The row then names the owner and says
+  that the program is hidden, instead of showing an empty or guessed name.
+- Ending a process: the user's own (or any, as root) with `kill`. A process of another user with
+  `sudo -n kill`, after a dialog that says so. sudo that wants a password, a user who is not in sudoers and
+  a server without sudo each get their own message. Clavium never enters a sudo password.
+- Before the signal the start time of the process is compared with what the list showed, so a process that
+  took over the number in the meantime is left alone.
+- No actions are offered for process 1, threads of the kernel and processes that have already ended.
+  Processes the connection itself runs through are marked, and the dialog warns.
+
+### Checked
+
+- `tests/activity.test.ts`: parser, addresses, hidden processes, root and not root, the fallback without
+  `ss`, a command line that poses as another process or as the end of the answer, the messages for every
+  kind of refusal. The real command is run by a real `sh` against a copied Linux file tree, and ending a
+  process really ends a started `sleep` (and leaves it alone when the start time differs).
+- `tests/e2e/monitor.e2e.ts`: both lists in the real app, sorting, search, "Only Mine", ending a process by
+  mouse and by keyboard, the refusal of sudo, jumping from a port to its process.
+
+### Not checked
+
+- A real Linux server, again. Above all: BusyBox (`head` with many files, `grep`, `cut`), a server with
+  `hidepid`, real `sudo` answers in other languages (the messages are matched in English; an unknown answer
+  is shown as the server wrote it), a server with thousands of processes.
+- Screen reader, 200 % zoom, dark mode by eye.
+
+### Known limits
+
+- Ports of containers that a firewall rule forwards without a listening program are not in `/proc/net`.
+- Sockets in other network namespaces (containers) are not listed.
+- A tunnel to a port cannot be opened from the list: tunnels are part of the settings of a host.
+- UDP lists every bound socket, also short-lived ones of clients.

@@ -1,8 +1,9 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
 import { Activity, AlertTriangle, ArrowDown, ArrowUp, HardDriveDownload, HardDriveUpload, Pause, Play, X } from 'lucide-react'
-import type { HostSummary, MonitorSample } from '@shared/types'
+import type { HostSummary, MonitorActivity, MonitorSample } from '@shared/types'
 import { api, on } from '../api'
-import { Empty, IconButton, Toolbar, formatBytes } from '../ui'
+import { Empty, IconButton, Segmented, Toolbar, formatBytes } from '../ui'
+import { PortsTab, ProcessesTab } from './MonitorActivity'
 import { StatusDot, type ConnState } from './TerminalView'
 
 type Stats = Extract<MonitorSample, { supported: true }>
@@ -10,6 +11,10 @@ type Stats = Extract<MonitorSample, { supported: true }>
 /** How often the server is asked. The first two measurements follow each other quickly, because rates need two. */
 const INTERVAL_MS = 3000
 const FIRST_INTERVAL_MS = 1000
+/** Processes and ports are a longer answer and are only asked for while their tab is shown. */
+const ACTIVITY_INTERVAL_MS = 4000
+
+type Tab = 'overview' | 'processes' | 'ports'
 /** What the charts show: the last minute at first, growing with the measurements up to five minutes. */
 const MAX_WINDOW_MS = 5 * 60 * 1000
 const MIN_WINDOW_MS = 60 * 1000
@@ -290,6 +295,12 @@ export function MonitorView(props: { host: HostSummary; active: boolean; onState
   const [paused, setPaused] = useState(false)
   /** why the last measurement failed; empty when it worked */
   const [failure, setFailure] = useState('')
+  const [tab, setTab] = useState<Tab>('overview')
+  const [activity, setActivity] = useState<MonitorActivity | null>(null)
+  const [activityFailure, setActivityFailure] = useState('')
+  const [processFilter, setProcessFilter] = useState('')
+  /** counts up to ask for processes and ports at once, after something was ended */
+  const [asked, setAsked] = useState(0)
 
   const report = (s: ConnState, msg = ''): void => {
     setState(s)
@@ -303,6 +314,8 @@ export function MonitorView(props: { host: HostSummary; active: boolean; onState
     setSample(null)
     setHistory([])
     setFailure('')
+    setActivity(null)
+    setActivityFailure('')
     api.monitor
       .open(props.host.id)
       .then((id) => {
@@ -368,7 +381,34 @@ export function MonitorView(props: { host: HostSummary; active: boolean; onState
     }
   }, [sid, paused])
 
+  useEffect(() => {
+    if (!sid || tab === 'overview') return
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let count = 0
+    const tick = async (): Promise<void> => {
+      try {
+        const a = await api.monitor.activity(sid)
+        if (stopped) return
+        setActivity(a)
+        setActivityFailure('')
+        if (!a.supported) return
+      } catch (e) {
+        if (stopped || sidRef.current !== sid) return
+        setActivityFailure(e instanceof Error ? e.message : String(e))
+      }
+      // shares of the processor need two measurements, so the second one follows quickly
+      if (!paused) timer = setTimeout(() => void tick(), count++ === 0 ? FIRST_INTERVAL_MS : ACTIVITY_INTERVAL_MS)
+    }
+    void tick()
+    return () => {
+      stopped = true
+      clearTimeout(timer)
+    }
+  }, [sid, tab === 'overview', paused, asked])
+
   const stats: Stats | null = sample?.supported ? sample : null
+  const live = activity?.supported ? activity : null
   const times = history.map((p) => p.at)
   const memShare = stats ? share(stats.mem.used, stats.mem.total) : 0
   const cacheShare = stats ? Math.min(100 - memShare, share(stats.mem.cache, stats.mem.total)) : 0
@@ -384,6 +424,18 @@ export function MonitorView(props: { host: HostSummary; active: boolean; onState
           </>
         }
       >
+        {stats && (
+          <Segmented<Tab>
+            label="Show"
+            value={tab}
+            onChange={setTab}
+            options={[
+              { value: 'overview', label: 'Overview' },
+              { value: 'processes', label: 'Processes' },
+              { value: 'ports', label: 'Ports' }
+            ]}
+          />
+        )}
         {stats && <IconButton icon={paused ? Play : Pause} label={paused ? 'Resume Measuring' : 'Pause Measuring'} pressed={paused} onClick={() => setPaused((p) => !p)} />}
         <span className="sep" />
         <IconButton icon={X} label="Close" onClick={props.onClose} />
@@ -431,6 +483,44 @@ export function MonitorView(props: { host: HostSummary; active: boolean; onState
             This server runs {sample.supported ? 'another system' : sample.os}, which does not report its load the way Linux does. Terminal and files work as usual.
           </Empty>
         </div>
+      ) : tab !== 'overview' ? (
+        !live ? (
+          <div className="view-fixed">
+            {activityFailure ? (
+              <Empty icon={Activity} title="Processes and Ports Could Not Be Read">
+                {activityFailure}
+              </Empty>
+            ) : (
+              <div className="overlay" style={{ position: 'relative', flex: 1 }}>
+                <div className="box">
+                  <div className="spinner" />
+                  <p>Reading processes and ports…</p>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="view-scroll">
+            {activityFailure && (
+              <p className="note mon-stale" role="status">
+                The last reading failed, the list shown is older: {activityFailure}
+              </p>
+            )}
+            {tab === 'processes' ? (
+              <ProcessesTab sid={sid} activity={live} filter={processFilter} setFilter={setProcessFilter} refresh={() => setAsked((n) => n + 1)} />
+            ) : (
+              <PortsTab
+                sid={sid}
+                activity={live}
+                refresh={() => setAsked((n) => n + 1)}
+                showProcess={(pid) => {
+                  setProcessFilter(String(pid))
+                  setTab('processes')
+                }}
+              />
+            )}
+          </div>
+        )
       ) : (
         <div className="view-scroll">
           <div className="mon">

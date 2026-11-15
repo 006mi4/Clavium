@@ -44,7 +44,11 @@
   system, temperatures and graphics cards (NVIDIA and AMD) of a Linux server, as rings, bars and charts of the
   last minutes. It reads what Linux itself reports over the SSH connection, so it works on every distribution
   and installs nothing on the server. Open it from the page of a host, from the toolbar of a terminal, or next
-  to a terminal in a split view.
+  to a terminal in a split view. Two more tabs list the **processes** (with their share of the
+  processor and their memory, sortable and searchable) and the **open ports** (with owner, reach and the
+  program behind them). A process can be ended from either list. The monitor says plainly what the signed-in
+  user may not see or do: hidden processes of other users, programs behind ports of other users, and
+  processes that only root or sudo can end.
 - **Workspaces with split view**: put several connections side by side in one tab (terminals, file managers,
   different servers), drag the dividers or move them with the arrow keys, and jump between the panes with
   `Ctrl+Alt+Arrow`. **Focus mode** (`Ctrl+Shift+Enter`) shows only the pane you work in and brings the others
@@ -143,6 +147,10 @@ Clavium follows the light / dark setting of Windows and macOS.
 | Monitor of a server | Graphics card, temperatures and storage |
 |---|---|
 | ![Monitor](docs/screenshots/15-monitor.png) | ![Storage](docs/screenshots/15b-monitor-storage.png) |
+
+| Processes | Open ports |
+|---|---|
+| ![Processes](docs/screenshots/17-monitor-processes.png) | ![Ports](docs/screenshots/18-monitor-ports.png) |
 
 | Text editor | Text editor (dark) |
 |---|---|
