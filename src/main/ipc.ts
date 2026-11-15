@@ -2,7 +2,9 @@ import { readFile } from 'node:fs/promises'
 import { app, clipboard, dialog, ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { z } from 'zod'
 import type { AppInfo, InvokeChannel } from '@shared/ipc'
-import { FTP_ENCODINGS, PROXY_TYPES, TEXT_ENCODING_IDS, type HostRecord, type HostSummary, type PromptResponse, type RemoteEntry } from '@shared/types'
+import { FTP_ENCODINGS, PROXY_TYPES, TEXT_ENCODING_IDS, type HostRecord, type HostSummary, type PromptResponse, type RemoteEntry, type SavedWorkspace, type WorkspaceLayout } from '@shared/types'
+import { DYNAMIC_KINDS } from '@shared/completeSpecs'
+import { MAX_PANES, panes as layoutPanes } from '@shared/layout'
 import type { AuditLog } from './core/audit'
 import { randomId } from './core/crypto'
 import { buildKeyRecord, generateKey, summarizeKey } from './core/keys'
@@ -318,6 +320,74 @@ export function registerIpc(ctx: IpcContext): void {
   handle('term:screens', z.tuple([id]), (sid) => ctx.terminals.screens(sid))
   handle('term:endScreen', z.tuple([id, screenId]), (sid, screen) => ctx.terminals.endScreen(sid, screen))
   handle('term:hasDocker', z.tuple([id]), (sid) => ctx.terminals.hasDocker(sid))
+
+  // suggestions while typing in a terminal: read-only lists from the server
+  const plainPath = z.string().min(1).max(4096).regex(/^[^\0\r\n]+$/)
+  const completionNeed = z.union([
+    z.object({ kind: z.literal('commands') }).strict(),
+    z.object({ kind: z.literal('dir'), path: plainPath }).strict(),
+    z.object({ kind: z.enum(DYNAMIC_KINDS), cwd: z.union([z.literal(''), plainPath]) }).strict()
+  ])
+  handle('term:completeContext', z.tuple([id]), (sid) => ctx.terminals.completeContext(sid))
+  handle('term:completeList', z.tuple([id, completionNeed]), (sid, need) => ctx.terminals.completeList(sid, need))
+  handle('term:completeHistory', z.tuple([id]), (sid) => ctx.terminals.completeHistory(sid))
+
+  // workspaces: tabs with several connections, saved by name, and the tabs of the last session
+  const layoutSchema: z.ZodType<WorkspaceLayout> = z.lazy(() =>
+    z.union([
+      z.object({ pane: z.number().int().min(0).max(MAX_PANES - 1) }).strict(),
+      z.object({ dir: z.enum(['row', 'col']), ratio: z.number().min(0).max(1), a: layoutSchema, b: layoutSchema }).strict()
+    ])
+  )
+  const tabSchema = z
+    .object({
+      name: z.string().trim().min(1).max(80).optional(),
+      panes: z
+        .array(
+          z
+            .object({
+              hostId: id,
+              kind: z.enum(['terminal', 'files', 'docker']),
+              target: z.object({ target: screenTarget, name: z.string().max(200) }).strict().optional()
+            })
+            .strict()
+        )
+        .min(1)
+        .max(MAX_PANES),
+      layout: layoutSchema,
+      focus: z.number().int().min(0).max(MAX_PANES - 1),
+      zoomed: z.boolean(),
+      workspaceId: id.optional()
+    })
+    .strict()
+    .refine((t) => {
+      // every pane appears in the layout exactly once
+      const used = layoutPanes(t.layout).slice().sort((x, y) => x - y)
+      return used.length === t.panes.length && used.every((n, i) => n === i) && t.focus < t.panes.length
+    }, 'The layout does not match the panes')
+  handle('workspace:list', z.tuple([]), () => [...(ctx.vault.data.workspaces ?? [])].sort((x, y) => x.name.localeCompare(y.name)))
+  handle('workspace:save', z.tuple([z.string().trim().min(1).max(80), tabSchema, id.nullable()]), (name, tab, existing) =>
+    ctx.vault.update((d) => {
+      const list = (d.workspaces ??= [])
+      const at = existing ? list.findIndex((w) => w.id === existing) : -1
+      if (at < 0 && list.length >= 200) throw new Error('There are too many saved workspaces')
+      const saved: SavedWorkspace = { ...tab, workspaceId: undefined, id: at >= 0 ? list[at].id : randomId(), name, updatedAt: Date.now() }
+      if (at >= 0) list[at] = saved
+      else list.push(saved)
+      return saved
+    })
+  )
+  handle('workspace:delete', z.tuple([id]), (wid) =>
+    ctx.vault.update((d) => {
+      d.workspaces = (d.workspaces ?? []).filter((w) => w.id !== wid)
+    })
+  )
+  handle('session:get', z.tuple([]), () => ctx.vault.data.lastSession ?? null)
+  handle('session:set', z.tuple([z.object({ tabs: z.array(tabSchema).max(50), active: z.number().int().min(-1).max(49) }).strict()]), (snapshot) =>
+    ctx.vault.update((d) => {
+      d.lastSession = snapshot
+    })
+  )
 
   // docker
   handle('docker:open', z.tuple([id]), (hostId) => ctx.docker.open(host(hostId)))

@@ -1,6 +1,11 @@
 import type { AppInfo, EventChannel, InvokeChannel, McpSnippets } from '@shared/ipc'
+import type { CompletionNeed } from '@shared/complete'
 import type {
   ActiveForward,
+  CompletionContext,
+  SavedWorkspace,
+  SessionSnapshot,
+  WorkspaceTab,
   AppSettings,
   AuditEntry,
   ClipboardCopyResult,
@@ -108,6 +113,9 @@ export const api = {
     hasDocker: (id: string) => call<boolean>('term:hasDocker', id),
     screens: (id: string) => call<ScreenList>('term:screens', id),
     endScreen: (id: string, screenId: string) => call<void>('term:endScreen', id, screenId),
+    completeContext: (id: string) => call<CompletionContext>('term:completeContext', id),
+    completeList: (id: string, need: CompletionNeed) => call<string[]>('term:completeList', id, need),
+    completeHistory: (id: string) => call<string[]>('term:completeHistory', id),
     write: (id: string, data: string) => call<void>('term:write', id, data),
     resize: (id: string, cols: number, rows: number) => call<void>('term:resize', id, cols, rows),
     close: (id: string) => call<void>('term:close', id)
@@ -170,6 +178,16 @@ export const api = {
     queueClear: () => call<void>('files:queueClear'),
     uploadPaths: (id: string, dir: string, paths: string[]) => call<boolean>('files:uploadPaths', id, dir, paths),
     close: (id: string) => call<void>('files:close', id)
+  },
+  workspaces: {
+    list: () => call<SavedWorkspace[]>('workspace:list'),
+    /** creates a workspace, or replaces the one with `id` */
+    save: (name: string, tab: WorkspaceTab, id?: string) => call<SavedWorkspace>('workspace:save', name, tab, id ?? null),
+    remove: (id: string) => call<void>('workspace:delete', id)
+  },
+  session: {
+    get: () => call<SessionSnapshot | null>('session:get'),
+    set: (snapshot: SessionSnapshot) => call<void>('session:set', snapshot)
   },
   fwd: {
     list: () => call<ActiveForward[]>('fwd:list'),

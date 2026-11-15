@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, rename, writeFile, copyFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import type { HostRecord, KnownHost, SshKeyRecord, VaultState } from '@shared/types'
+import type { HostRecord, KnownHost, SavedWorkspace, SessionSnapshot, SshKeyRecord, VaultState } from '@shared/types'
 import { DEFAULT_KDF, deriveKey, newKdfParams, open, seal, type KdfParams } from './crypto'
 
 export interface VaultData {
@@ -9,6 +9,10 @@ export interface VaultData {
   keys: SshKeyRecord[]
   knownHosts: KnownHost[]
   mcpToken?: string
+  /** tab layouts the user saved by name */
+  workspaces?: SavedWorkspace[]
+  /** the tabs that were open last, to open them again */
+  lastSession?: SessionSnapshot
 }
 
 interface VaultFile {

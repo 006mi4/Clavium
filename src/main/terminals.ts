@@ -1,5 +1,8 @@
 import type { Client, ClientChannel } from 'ssh2'
-import type { HostRecord, ScreenList, TerminalTarget } from '@shared/types'
+import type { CompletionContext, HostRecord, ScreenList, TerminalTarget } from '@shared/types'
+import type { CompletionNeed } from '@shared/complete'
+import { parseHistory as parseShellHistory } from '@shared/complete'
+import { CONTEXT_COMMAND, HISTORY_COMMAND, listCommand, parseContext, parseList } from './core/completion'
 import { logsCommand, shellCommand } from './core/docker'
 import { randomId } from './core/crypto'
 import type { Prompter } from './core/prompter'
@@ -139,6 +142,31 @@ export class TerminalManager {
     if (!s) return false
     const r = await execCommand(s.client, 'command -v docker >/dev/null 2>&1 && echo yes', { timeoutMs: 8000, maxBytes: 1024 })
     return r.stdout.includes('yes')
+  }
+
+  // ---- suggestions: every call only reads, on a channel of its own next to the shell ----
+
+  /** Where the shell of this terminal is, and whether a program other than a shell has the terminal. */
+  async completeContext(id: string): Promise<CompletionContext> {
+    const s = this.sessions.get(id)
+    if (!s) return { cwd: '', home: '', busy: false }
+    const r = await execCommand(s.client, CONTEXT_COMMAND, { timeoutMs: 5000, maxBytes: 64 * 1024 })
+    return parseContext(r.stdout)
+  }
+
+  async completeList(id: string, need: CompletionNeed): Promise<string[]> {
+    const s = this.sessions.get(id)
+    if (!s) return []
+    const r = await execCommand(s.client, listCommand(need), { timeoutMs: 5000, maxBytes: 1024 * 1024 })
+    return parseList(need, r.stdout)
+  }
+
+  /** The commands the user typed on this server before, newest first. Kept in memory only. */
+  async completeHistory(id: string): Promise<string[]> {
+    const s = this.sessions.get(id)
+    if (!s) return []
+    const r = await execCommand(s.client, HISTORY_COMMAND, { timeoutMs: 5000, maxBytes: 1024 * 1024 })
+    return parseShellHistory(r.stdout)
   }
 
   /** End a screen and the program running in it. Only on an explicit request of the user. */

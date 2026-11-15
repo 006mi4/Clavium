@@ -10,7 +10,8 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode
 } from 'react'
-import { CircleAlert, CircleCheck, Info, TriangleAlert, type LucideProps } from 'lucide-react'
+import { CircleAlert, CircleCheck, Columns2, Info, Maximize2, Minimize2, TriangleAlert, type LucideProps } from 'lucide-react'
+import { keys } from './platform'
 
 export type IconType = ComponentType<LucideProps>
 
@@ -377,8 +378,21 @@ export function Empty(props: { icon: IconType; title: string; children?: ReactNo
 
 // --------------------------------------------------------------- layout --
 
+/** What the toolbar of a session needs to know about the tab it is a pane of. */
+export interface PaneControls {
+  /** the tab shows several connections */
+  split: boolean
+  /** focus mode: this pane fills the tab, the others are hidden */
+  zoomed: boolean
+  toggleZoom: () => void
+  /** opens the menu with "split" and "save workspace" below the clicked button */
+  openMenu: (e: ReactMouseEvent<HTMLElement>) => void
+}
+export const PaneContext = createContext<PaneControls | null>(null)
+
 /** Unified toolbar of a view. It is also the window's drag region. */
 export function Toolbar(props: { title: ReactNode; subtitle?: ReactNode; lead?: ReactNode; children?: ReactNode }) {
+  const pane = useContext(PaneContext)
   return (
     <div className="toolbar drag">
       {props.lead}
@@ -386,6 +400,19 @@ export function Toolbar(props: { title: ReactNode; subtitle?: ReactNode; lead?: 
         <span className="title">{props.title}</span>
         {props.subtitle && <span className="subtitle">{props.subtitle}</span>}
       </div>
+      {pane?.split && (
+        <IconButton
+          icon={pane.zoomed ? Minimize2 : Maximize2}
+          label={pane.zoomed ? `Leave Focus Mode (${keys('Ctrl+Shift+Enter')})` : `Focus Mode: Show Only This Pane (${keys('Ctrl+Shift+Enter')})`}
+          pressed={pane.zoomed}
+          onClick={pane.toggleZoom}
+        />
+      )}
+      {pane && (
+        <button type="button" className="icon-btn" title="Split View and Workspace" aria-label="Split View and Workspace" aria-haspopup="menu" onClick={pane.openMenu}>
+          <Columns2 size={16} />
+        </button>
+      )}
       {props.children}
     </div>
   )

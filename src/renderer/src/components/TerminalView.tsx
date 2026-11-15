@@ -6,6 +6,7 @@ import { Container, FolderOpen, Layers, Plus, Power, RotateCw, X } from 'lucide-
 import type { HostSummary, ScreenList, TerminalTarget } from '@shared/types'
 import { api, on } from '../api'
 import { IconButton, Sheet, Toolbar, useConfirm, useDarkMode, useMenu, useToast, type MenuItem } from '../ui'
+import { useTerminalSuggest } from './TerminalSuggest'
 
 export type ConnState = 'connecting' | 'connected' | 'closed' | 'error'
 
@@ -72,6 +73,8 @@ export function TerminalView(props: {
   host: HostSummary
   active: boolean
   fontSize: number
+  /** suggest commands, options and paths while typing */
+  autocomplete: boolean
   onState: (s: ConnState) => void
   /** set when this tab shows something else than a login shell: a screen, a container log, a shell in a container */
   target?: { target: TerminalTarget; name: string }
@@ -99,6 +102,11 @@ export function TerminalView(props: {
   const [message, setMessage] = useState('')
   const [attempt, setAttempt] = useState(0)
   const dark = useDarkMode()
+  const wrapRef = useRef<HTMLDivElement>(null)
+  // Suggestions are for the prompt of a shell: not for a screen, a log or a shell inside a container.
+  const suggest = useTerminalSuggest({ term: termRef, session: sessionRef, wrap: wrapRef, enabled: props.autocomplete && !props.target })
+  const suggestRef = useRef(suggest)
+  suggestRef.current = suggest
 
   const update = (s: ConnState, msg = ''): void => {
     setState(s)
@@ -111,6 +119,17 @@ export function TerminalView(props: {
     } catch {
       /* not visible */
     }
+  }
+
+  /**
+   * Give the keyboard to the terminal, unless it is on a control of this very pane: someone who
+   * walks through the toolbar with the Tab key must not be pulled back into the terminal.
+   */
+  const focusUnlessBusy = (): void => {
+    const pane = wrapRef.current?.closest('.pane')
+    const at = document.activeElement
+    if (pane && at && at !== document.body && pane.contains(at) && !at.classList.contains('xterm-helper-textarea')) return
+    termRef.current?.focus()
   }
 
   // create the terminal once
@@ -134,13 +153,16 @@ export function TerminalView(props: {
 
     const paste = (): void => {
       void api.clipboard.read().then((t) => {
-        if (sessionRef.current && t) void api.term.write(sessionRef.current, t)
+        if (!sessionRef.current || !t) return
+        suggestRef.current.onInput(t)
+        void api.term.write(sessionRef.current, t)
       })
     }
     // Ctrl+Shift+C / Ctrl+Shift+V; right-click copies the selection or pastes.
     // On macOS Cmd+C / Cmd+V also work: they come from the Edit menu of the app.
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== 'keydown') return true
+      if (!suggestRef.current.onKey(e)) return false
       if (e.ctrlKey && e.shiftKey && e.code === 'KeyC') {
         const sel = term.getSelection()
         if (sel) void api.clipboard.write(sel)
@@ -166,8 +188,11 @@ export function TerminalView(props: {
     node?.addEventListener('contextmenu', onContext)
 
     const dataSub = term.onData((d) => {
-      if (sessionRef.current) void api.term.write(sessionRef.current, d)
+      if (!sessionRef.current) return
+      suggestRef.current.onInput(d)
+      void api.term.write(sessionRef.current, d)
     })
+    const parsedSub = term.onWriteParsed(() => suggestRef.current.onOutput())
     const resizeSub = term.onResize(({ cols, rows }) => {
       if (sessionRef.current) void api.term.resize(sessionRef.current, cols, rows)
     })
@@ -177,6 +202,7 @@ export function TerminalView(props: {
     const offExit = on('term:exit', (id: string, reason: string) => {
       if (id !== sessionRef.current) return
       sessionRef.current = null
+      suggestRef.current.reset()
       update('closed', reason)
     })
     const ro = new ResizeObserver(fit)
@@ -187,6 +213,7 @@ export function TerminalView(props: {
       offData()
       offExit()
       dataSub.dispose()
+      parsedSub.dispose()
       resizeSub.dispose()
       node?.removeEventListener('contextmenu', onContext)
       if (sessionRef.current) void api.term.close(sessionRef.current)
@@ -210,8 +237,9 @@ export function TerminalView(props: {
         }
         if (props.target) term.reset() // a reconnect brings the history again
         sessionRef.current = id
+        suggestRef.current.reset()
         update('connected')
-        term.focus()
+        focusUnlessBusy()
         // Look for screens and Docker quietly; a server without them simply shows no button.
         if (props.host.protocol === 'ssh' && !props.target) {
           api.term
@@ -245,7 +273,7 @@ export function TerminalView(props: {
     if (props.active) {
       requestAnimationFrame(() => {
         fit()
-        termRef.current?.focus()
+        focusUnlessBusy()
       })
     }
   }, [props.active])
@@ -329,8 +357,9 @@ export function TerminalView(props: {
         />
       )}
       <div className="view-fixed">
-        <div className="term-wrap" style={{ ['--term-bg' as string]: dark ? DARK.background : LIGHT.background }}>
+        <div className="term-wrap" ref={wrapRef} style={{ ['--term-bg' as string]: dark ? DARK.background : LIGHT.background }}>
           <div ref={ref} style={{ height: '100%' }} />
+          {suggest.element}
           {state !== 'connected' && (
             <div className={`overlay ${state === 'closed' ? 'soft' : ''}`}>
               <div className="box">

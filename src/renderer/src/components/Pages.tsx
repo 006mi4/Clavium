@@ -6,7 +6,7 @@ import type { AuditEntry, KnownHost, SshKeySummary, UpdateState } from '@shared/
 import { api, on, type UiSettings } from '../api'
 import { Empty, Group, IconButton, Row, Segmented, Select, Sheet, Switch, Toolbar, ValueRow, formatDate, useConfirm, useMenu, useToast } from '../ui'
 import { StrengthBar } from './LockScreen'
-import { isMac } from '../platform'
+import { isMac, keys as shortcut } from '../platform'
 
 // ----------------------------------------------------------------- keys --
 
@@ -365,6 +365,15 @@ export function SettingsPage(props: { settings: UiSettings }) {
                 onChange={(v) => set({ terminalFontSize: v })}
                 options={[11, 12, 13, 14, 15, 16, 18, 20, 24].map((n) => ({ value: n, label: `${n} pt` }))}
               />
+            </Row>
+            <Row
+              label="Suggestions in the terminal"
+              hint={`Commands, options, paths and lines of your history appear while you type. Tab inserts one, ${shortcut('Ctrl+Space', '⌃Space')} opens the list. To fill it, Clavium reads folder listings and your shell history from the server. Nothing of it is stored.`}
+            >
+              <Switch on={s.terminalAutocomplete} onChange={(v) => set({ terminalAutocomplete: v })} />
+            </Row>
+            <Row label="Open the tabs of the last session" hint="After unlocking, Clavium connects again to everything that was open, with the same split view.">
+              <Switch on={s.restoreSession} onChange={(v) => set({ restoreSession: v })} />
             </Row>
           </Group>
 

@@ -115,6 +115,10 @@ export interface AppSettings {
   transferPreserve: boolean
   /** Program that opens files for "Open in External Editor". Empty: the text editor of the system. */
   externalEditor: string
+  /** Suggest commands, options and paths while typing in a terminal. */
+  terminalAutocomplete: boolean
+  /** Open the tabs of the last session again after unlocking. */
+  restoreSession: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -129,7 +133,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   transferLimitKbps: 0,
   transferExisting: 'ask',
   transferPreserve: true,
-  externalEditor: ''
+  externalEditor: '',
+  terminalAutocomplete: true,
+  restoreSession: true
 }
 
 export type VaultState = 'uninitialized' | 'locked' | 'unlocked'
@@ -632,4 +638,56 @@ export interface ExternalEditStatus {
   state: 'open' | 'uploading' | 'conflict' | 'error'
   uploads: number
   lastError?: string
+}
+
+// ---- Terminal suggestions --------------------------------------------------
+
+/** What is known about the place a terminal is in when a line is started. */
+export interface CompletionContext {
+  /** folder of the shell; empty when the server cannot tell */
+  cwd: string
+  home: string
+  /** a program other than a shell has the terminal: nothing is suggested */
+  busy: boolean
+}
+
+// ---- Workspaces ------------------------------------------------------------
+
+export type PaneKind = 'terminal' | 'files' | 'docker'
+
+/** One connection inside a tab. */
+export interface WorkspacePane {
+  hostId: string
+  kind: PaneKind
+  /** a terminal that shows a screen, a container log or a shell in a container */
+  target?: { target: TerminalTarget; name: string }
+}
+
+/** The arrangement of the panes; the leaves are indexes into `panes`. */
+export type WorkspaceLayout = { pane: number } | { dir: 'row' | 'col'; ratio: number; a: WorkspaceLayout; b: WorkspaceLayout }
+
+/** A tab with everything needed to open it again the way it was. */
+export interface WorkspaceTab {
+  name?: string
+  panes: WorkspacePane[]
+  layout: WorkspaceLayout
+  /** index of the pane that had the keyboard */
+  focus: number
+  /** focus mode: only the focused pane is shown */
+  zoomed: boolean
+  /** the saved workspace this tab was opened from */
+  workspaceId?: string
+}
+
+export interface SavedWorkspace extends WorkspaceTab {
+  id: string
+  name: string
+  updatedAt: number
+}
+
+/** The open tabs, written while working and read after the next unlock. */
+export interface SessionSnapshot {
+  tabs: WorkspaceTab[]
+  /** index of the visible tab, -1 for a page of the library */
+  active: number
 }

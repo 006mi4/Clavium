@@ -19,6 +19,8 @@ export interface TestSshServer {
   tunnels: { host: string; port: number }[]
   /** how many clients have logged in so far */
   logins: number
+  /** answers commands that are run without a terminal; undefined: the default answer "ran: <command>" */
+  onExec?: (command: string) => string | undefined
   /** cut every open connection, as a network failure would; the server keeps running */
   dropClients(): void
   close(): Promise<void>
@@ -59,6 +61,7 @@ export async function startTestSshServer(hostKey?: string): Promise<TestSshServe
   const tunnels: TestSshServer['tunnels'] = []
   const clients = new Set<Connection>()
   const state = { logins: 0 }
+  let api = {} as TestSshServer
   const real = (vpath: string): string => {
     const norm = posix.normalize(posix.isAbsolute(vpath) ? vpath : posix.join('/', vpath))
     if (norm.includes('..')) throw new Error('escape')
@@ -116,6 +119,13 @@ export async function startTestSshServer(hostKey?: string): Promise<TestSshServe
           if (info.command === 'sleep') {
             stream.on('close', () => undefined)
             return // never finishes -> client timeout
+          }
+          const answer = api.onExec?.(info.command)
+          if (answer !== undefined) {
+            stream.write(answer)
+            stream.exit(0)
+            stream.end()
+            return
           }
           stream.write(`ran: ${info.command}\n`)
           stream.stderr.write('warn\n')
@@ -240,7 +250,7 @@ export async function startTestSshServer(hostKey?: string): Promise<TestSshServe
 
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()))
   const port = (server.address() as AddressInfo).port
-  return {
+  api = {
     port,
     root,
     hostKey: key,
@@ -259,4 +269,5 @@ export async function startTestSshServer(hostKey?: string): Promise<TestSshServe
         fs.rmSync(root, { recursive: true, force: true })
       })
   }
+  return api
 }

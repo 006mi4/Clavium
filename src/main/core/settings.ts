@@ -17,7 +17,9 @@ export const settingsSchema = z.object({
   transferLimitKbps: z.number().int().min(0).max(10_000_000),
   transferExisting: z.enum(EXISTING_RULES),
   transferPreserve: z.boolean(),
-  externalEditor: z.string().max(1024).regex(/^[^\r\n\0]*$/)
+  externalEditor: z.string().max(1024).regex(/^[^\r\n\0]*$/),
+  terminalAutocomplete: z.boolean(),
+  restoreSession: z.boolean()
 })
 
 /** Non-secret preferences, stored as plain JSON next to the vault. */

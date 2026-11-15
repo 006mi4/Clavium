@@ -34,6 +34,17 @@
 
 - **SSH terminal** with tabs (xterm.js, 256 colours, copy/paste, resize), password, key, SSH agent
   (Windows OpenSSH agent / Pageant, the SSH agent of macOS) and keyboard-interactive / 2FA logins
+- **Suggestions while you type**, the way a code editor offers them: commands of the server, subcommands and
+  options of common tools (git, docker, systemctl, apt, npm, kubectl and many more) with a short explanation,
+  files and folders relative to the folder your shell is in, branches, services and containers, and lines of
+  your history. `Tab` inserts a suggestion, the arrow keys choose, `Esc` closes the list, `Ctrl+Space` opens
+  it. The line is read from the screen, never from the keys, so a password typed without echo is never seen.
+  Nothing is installed on the server and nothing is stored. It can be switched off in the settings.
+- **Workspaces with split view**: put several connections side by side in one tab (terminals, file managers,
+  different servers), drag the dividers or move them with the arrow keys, and jump between the panes with
+  `Ctrl+Alt+Arrow`. **Focus mode** (`Ctrl+Shift+Enter`) shows only the pane you work in and brings the others
+  back afterwards. Save a tab as a named workspace and open the whole arrangement again with one click. After
+  a restart Clavium opens the tabs of the last session again, with the same split, sizes and focus mode.
 - **Screens made simple** (GNU screen): the terminal shows which screens are running under your user. One
   click opens a screen in its own tab, with what it printed so far in the scrollback, so the mouse wheel just
   works. The keyboard goes straight to the program inside, e.g. the console of a game server. Closing the tab
