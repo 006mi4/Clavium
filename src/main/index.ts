@@ -1,4 +1,5 @@
 ﻿import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { spawn } from 'node:child_process'
 import { join, resolve } from 'node:path'
 import {
   app,
@@ -30,6 +31,34 @@ import { Updater } from './updater'
 import { readClipboardFiles, writeClipboardFiles } from './fileclipboard'
 
 /** Real location of the executable (the portable build unpacks itself to a temp dir). */
+
+/**
+ * Open a local file in an editor. The file is always handed to an editor program as an argument
+ * and never started itself: its name and content come from a server.
+ */
+function openInEditor(file: string, program: string): Promise<void> {
+  // The end-to-end tests have no editor to open.
+  if (process.env.CLAVIUM_NO_EXTERNAL_EDITOR && !app.isPackaged) return Promise.resolve()
+  const mac = process.platform === 'darwin'
+  // Elsewhere "open with the default program" may start the file itself. Not with files from a server.
+  if (!program && !mac && process.platform !== 'win32') return Promise.reject(new Error('Choose an editor in Settings first'))
+  const [command, args] = program
+    ? mac && program.replace(/\/+$/, '').endsWith('.app')
+      ? ['open', ['-a', program, file]]
+      : [program, [file]]
+    : mac
+      ? ['open', ['-t', file]]
+      : ['notepad.exe', [file]]
+  return new Promise((resolve, reject) => {
+    const child = spawn(command as string, args as string[], { detached: true, stdio: 'ignore' })
+    child.once('error', (e) => reject(new Error(`The editor could not be started (${e.message})`)))
+    child.once('spawn', () => {
+      child.unref()
+      resolve()
+    })
+  })
+}
+
 function exePath(): string {
   return process.env.PORTABLE_EXECUTABLE_FILE || process.execPath
 }
@@ -134,7 +163,8 @@ function runApp(): void {
     readClipboardFiles,
     writeClipboardFiles,
     clearClipboard: () => clipboard.clear(),
-    trash: (path) => shell.trashItem(path)
+    trash: (path) => shell.trashItem(path),
+    openInEditor: (path) => openInEditor(path, settings.get().externalEditor)
   }, () => settings.get())
   const docker = new DockerManager(vault, prompter, send)
   const forwards = new ForwardManager(vault, prompter, () => send('fwd:changed'))

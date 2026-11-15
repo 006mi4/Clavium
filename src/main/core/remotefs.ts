@@ -283,23 +283,47 @@ export class SftpFs implements RemoteFs {
     const st = await p<Stats>((cb) => this.sftp.stat(path, cb))
     if (typeFromMode(st.mode) === 'dir') throw new Error('Path is a directory')
     const handle = await p<Buffer>((cb) => this.sftp.open(path, 'r', cb))
-    const chunks: Buffer[] = []
-    let pos = 0
+    const read = (buf: Buffer, at: number, want: number, pos: number): Promise<number> =>
+      new Promise<number>((resolve, reject) => this.sftp.read(handle, buf, at, want, pos, (err, bytesRead) => (err ? reject(err) : resolve(bytesRead))))
+    let data: Buffer
     try {
-      while (pos < maxBytes) {
-        const want = Math.min(32768, maxBytes - pos)
-        const buf = Buffer.alloc(want)
-        const n = await new Promise<number>((resolve, reject) =>
-          this.sftp.read(handle, buf, 0, want, pos, (err, bytesRead) => (err ? reject(err) : resolve(bytesRead)))
-        )
-        if (n <= 0) break
-        chunks.push(buf.subarray(0, n))
-        pos += n
+      const expected = Math.min(st.size, maxBytes)
+      if (expected > CHUNK) {
+        // Many requests at once: one after the other, a file of some megabytes takes very long on a slow line.
+        data = Buffer.alloc(expected)
+        let end = expected
+        const piece = async (start: number): Promise<void> => {
+          const stop = Math.min(start + CHUNK, expected)
+          for (let pos = start; pos < stop; ) {
+            const n = await read(data, pos, stop - pos, pos)
+            if (n <= 0) {
+              // The file became shorter while it was read.
+              end = Math.min(end, pos)
+              return
+            }
+            pos += n
+          }
+        }
+        for (let base = 0; base < expected && end === expected; base += CHUNK * 16) {
+          await Promise.all(Array.from({ length: Math.min(16, Math.ceil((expected - base) / CHUNK)) }, (_, i) => piece(base + i * CHUNK)))
+        }
+        data = data.subarray(0, end)
+      } else {
+        // Small files, and files whose size the server does not know (it says 0): read to the end.
+        const chunks: Buffer[] = []
+        for (let pos = 0; pos < maxBytes; ) {
+          const want = Math.min(CHUNK, maxBytes - pos)
+          const buf = Buffer.alloc(want)
+          const n = await read(buf, 0, want, pos)
+          if (n <= 0) break
+          chunks.push(buf.subarray(0, n))
+          pos += n
+        }
+        data = Buffer.concat(chunks)
       }
     } finally {
       await p<void>((cb) => this.sftp.close(handle, (err) => cb(err, undefined))).catch(() => undefined)
     }
-    const data = Buffer.concat(chunks)
     return { data, size: st.size, truncated: st.size > data.length }
   }
 

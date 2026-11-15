@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type WheelEvent } from 'react'
 import { ChevronLeft, ClipboardCopy, Sparkles, Columns2, Download, Keyboard, MoreHorizontal, Replace, RotateCw, Save, SaveAll, Search, WrapText, X, XCircle } from 'lucide-react'
-import type { EditorEdit, RemoteEntry, TextFile } from '@shared/types'
+import { TEXT_ENCODINGS, type EditorEdit, type RemoteEntry, type TextEncoding, type TextFile } from '@shared/types'
 import { api } from '../api'
 import { applyAiEdit, indentUnit } from '../editor/commands'
 import { detectLanguage } from '../editor/highlight'
@@ -15,7 +15,9 @@ interface Doc {
   name: string
   status: 'loading' | 'ready' | 'error'
   error?: string
-  meta?: Pick<TextFile, 'eol' | 'bom' | 'version'>
+  meta?: Pick<TextFile, 'eol' | 'bom' | 'version' | 'encoding' | 'guessed'>
+  /** the character set was changed and the file has to be written again in it */
+  recode?: boolean
   text: string
   savedText: string
   /** language chosen by hand; otherwise detected from the name */
@@ -120,7 +122,7 @@ export function EditorWorkspace(props: {
 
   const pane = panes[Math.min(focus, panes.length - 1)]
   const activeDoc = pane.active ? docs[pane.active] : undefined
-  const isDirty = (d: Doc): boolean => d.status === 'ready' && d.text !== d.savedText
+  const isDirty = (d: Doc): boolean => d.status === 'ready' && (d.text !== d.savedText || !!d.recode)
   const openCount = Object.keys(docs).length
   const unsaved = Object.values(docs).filter(isDirty).length
 
@@ -156,13 +158,13 @@ export function EditorWorkspace(props: {
 
   const patch = (path: string, p: Partial<Doc>): void => setDocs((d) => (d[path] ? { ...d, [path]: { ...d[path], ...p } } : d))
 
-  const load = useCallback(async (path: string): Promise<void> => {
+  const load = useCallback(async (path: string, encoding?: TextEncoding): Promise<void> => {
     const sid = sidRef.current
     if (!sid) return patch(path, { status: 'error', error: 'Not connected to the server.' })
     patch(path, { status: 'loading', error: undefined })
     try {
-      const f = await api.files.readText(sid, path)
-      patch(path, { status: 'ready', text: f.text, savedText: f.text, meta: { eol: f.eol, bom: f.bom, version: f.version }, stale: false, aiEdited: false })
+      const f = await api.files.readText(sid, path, encoding)
+      patch(path, { status: 'ready', text: f.text, savedText: f.text, meta: { eol: f.eol, bom: f.bom, version: f.version, encoding: f.encoding, guessed: f.guessed }, stale: false, aiEdited: false, recode: false })
     } catch (e) {
       patch(path, { status: 'error', error: (e as Error).message })
     }
@@ -185,6 +187,25 @@ export function EditorWorkspace(props: {
     if (path) requestAnimationFrame(() => handles.current.get(`${paneIndex}:${path}`)?.focus())
   }
 
+  /** Read the file again as another character set, or keep the text and write it in another one. */
+  const setEncoding = async (path: string, how: 'reopen' | 'convert', encoding: TextEncoding): Promise<void> => {
+    const d = docsRef.current[path]
+    if (!d || d.status !== 'ready' || !d.meta) return
+    const label = TEXT_ENCODINGS.find((e) => e.id === encoding)?.label ?? encoding
+    if (how === 'convert') {
+      // UTF-16 needs its mark to be recognised; the other character sets have none.
+      // On the newest state: a save that is still on its way must not be undone by this.
+      setDocs((all) => {
+        const cur = all[path]
+        return cur?.meta ? { ...all, [path]: { ...cur, meta: { ...cur.meta, encoding, guessed: false, bom: encoding.startsWith('utf-16') }, recode: true } } : all
+      })
+      toast.info(`“${d.name}” is written as ${label} when you save.`)
+      return
+    }
+    if (isDirty(d) && !(await confirm({ title: 'Discard Your Changes?', message: `Reading “${d.name}” again as ${label} discards the changes you have not saved.`, confirmLabel: 'Discard and Reopen', destructive: true }))) return
+    await load(path, encoding)
+  }
+
   // ------------------------------------------------------------- saving --
 
   const save = async (path: string, force = false): Promise<boolean> => {
@@ -199,9 +220,15 @@ export function EditorWorkspace(props: {
     patch(path, { saving: true })
     try {
       const textNow = d.text
-      const r = await api.files.writeText(sid, path, { text: textNow, eol: d.meta.eol, bom: d.meta.bom }, d.meta.version, force)
+      const r = await api.files.writeText(sid, path, { text: textNow, eol: d.meta.eol, bom: d.meta.bom, encoding: d.meta.encoding }, d.meta.version, force)
       if (r.saved) {
-        patch(path, { savedText: textNow, meta: { ...d.meta, version: r.version }, stale: false, saving: false, aiEdited: false })
+        const written = d.meta.encoding
+        setDocs((all) => {
+          const cur = all[path]
+          if (!cur?.meta) return all
+          // The character set may have been changed while the file was on its way: then it is written once more.
+          return { ...all, [path]: { ...cur, savedText: textNow, meta: { ...cur.meta, guessed: false, version: r.version }, stale: false, saving: false, aiEdited: false, recode: cur.meta.encoding === written ? false : cur.recode } }
+        })
         props.onSaved()
         return true
       }
@@ -537,6 +564,9 @@ export function EditorWorkspace(props: {
                       unit={indentUnit(d.savedText)}
                       eol={d.meta.eol}
                       bom={d.meta.bom}
+                      encoding={d.meta.encoding}
+                      guessed={!!d.meta.guessed}
+                      onEncoding={(how, enc) => void setEncoding(path, how, enc)}
                       visible={props.visible && p.active === path}
                       live={pi === Math.min(focus, panes.length - 1) || !panes.some((o, oi) => oi !== pi && o.active === path)}
                       fontSize={fontSize}

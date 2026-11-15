@@ -13,6 +13,7 @@ import type {
   ChmodOptions,
   DockerStats,
   ExistingRule,
+  ExternalEditStatus,
   FolderSize,
   CopyResult,
   HostInput,
@@ -33,6 +34,7 @@ import type {
   WatchStatus,
   TerminalTarget,
   SshKeySummary,
+  TextEncoding,
   TextFile,
   TextFileVersion,
   TextWriteResult,
@@ -91,6 +93,7 @@ export const api = {
     remove: (id: string) => call<void>('knownHosts:remove', id)
   },
   settings: {
+    pickProgram: () => call<string | null>('settings:pickProgram'),
     get: () => call<UiSettings>('settings:get'),
     set: (patch: Partial<UiSettings>) => call<UiSettings>('settings:set', patch)
   },
@@ -130,8 +133,8 @@ export const api = {
     rename: (id: string, from: string, to: string) => call<void>('files:rename', id, from, to),
     stat: (id: string, path: string) => call<RemoteEntry>('files:stat', id, path),
     createFile: (id: string, path: string) => call<void>('files:createFile', id, path),
-    readText: (id: string, path: string) => call<TextFile>('files:readText', id, path),
-    writeText: (id: string, path: string, file: Pick<TextFile, 'text' | 'eol' | 'bom'>, expected: TextFileVersion, force: boolean) =>
+    readText: (id: string, path: string, encoding?: TextEncoding) => call<TextFile>('files:readText', id, path, encoding ?? null),
+    writeText: (id: string, path: string, file: Pick<TextFile, 'text' | 'eol' | 'bom' | 'encoding'>, expected: TextFileVersion, force: boolean) =>
       call<TextWriteResult>('files:writeText', id, path, file, expected, force),
     remove: (id: string, path: string, recursive: boolean) => call<void>('files:remove', id, path, recursive),
     download: (id: string, entries: RemoteEntry[]) => call<boolean>('files:download', id, entries),
@@ -156,6 +159,11 @@ export const api = {
     watchStart: (id: string, remoteDir: string, localDir: string) => call<WatchStatus>('files:watchStart', id, remoteDir, localDir),
     watchStop: (watchId: string) => call<void>('files:watchStop', watchId),
     watchList: () => call<WatchStatus[]>('files:watchList'),
+    readImage: (id: string, path: string) => call<{ dataUrl: string; size: number }>('files:readImage', id, path),
+    externalEdit: (id: string, entry: RemoteEntry) => call<ExternalEditStatus>('files:externalEdit', id, entry),
+    externalUpload: (editId: string) => call<void>('files:externalUpload', editId),
+    externalStop: (editId: string) => call<void>('files:externalStop', editId),
+    externalList: () => call<ExternalEditStatus[]>('files:externalList'),
     queue: () => call<TransferSnapshot>('files:queueGet'),
     queueAction: (action: QueueAction, transferId?: string) => call<void>('files:queueAction', action, transferId ?? null),
     queueAnswer: (transferId: string, rule: Exclude<ExistingRule, 'ask'>, all: boolean) => call<void>('files:queueAnswer', transferId, rule, all),

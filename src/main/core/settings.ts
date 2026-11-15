@@ -16,7 +16,8 @@ export const settingsSchema = z.object({
   transferConcurrency: z.number().int().min(1).max(10),
   transferLimitKbps: z.number().int().min(0).max(10_000_000),
   transferExisting: z.enum(EXISTING_RULES),
-  transferPreserve: z.boolean()
+  transferPreserve: z.boolean(),
+  externalEditor: z.string().max(1024).regex(/^[^\r\n\0]*$/)
 })
 
 /** Non-secret preferences, stored as plain JSON next to the vault. */

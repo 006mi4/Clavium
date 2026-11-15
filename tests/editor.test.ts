@@ -1,3 +1,5 @@
+import { readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { detectLanguage, highlight } from '../src/renderer/src/editor/highlight'
 import { decodeText, encodeText, readTextFile, writeTextFile } from '../src/main/core/textfile'
@@ -78,9 +80,47 @@ describe('text encoding', () => {
     expect(decodeText(Buffer.from('a\r\nb\nc')).eol).toBe('mixed')
   })
 
-  it('refuses binary and non-UTF-8 files', () => {
+  it('refuses binary files, and reads a file that is not UTF-8 as a guess the user can correct', () => {
     expect(() => decodeText(Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x00, 0x01]))).toThrow(/binary/)
-    expect(() => decodeText(Buffer.from([0x48, 0xe4, 0x6c, 0x6c, 0x6f]))).toThrow(/UTF-8/) // latin-1 "Hällo"
+    const latin = Buffer.from([0x48, 0xe4, 0x6c, 0x6c, 0x6f, 0x20, 0x80]) // "Hällo €" in Windows-1252
+    expect(decodeText(latin)).toMatchObject({ text: 'Hällo €', encoding: 'windows-1252', guessed: true, bom: false })
+    expect(decodeText(Buffer.from('plain'))).toEqual({ text: 'plain', eol: 'lf', bom: false, encoding: 'utf-8' })
+    // the same bytes mean other letters in another character set
+    expect(decodeText(Buffer.from([0xcf, 0xf0, 0xe8, 0xe2, 0xe5, 0xf2]), 'windows-1251').text).toBe('Привет')
+    expect(decodeText(Buffer.from([0xa4]), 'iso-8859-15').text).toBe('€')
+    // asked to read as UTF-8, bytes that are not UTF-8 are refused instead of being lost on saving
+    expect(() => decodeText(latin, 'utf-8')).toThrow(/not valid UTF-8/)
+  })
+
+  it('writes every character set back byte for byte, with its line endings', () => {
+    for (const encoding of ['windows-1252', 'iso-8859-15', 'macintosh', 'windows-1250', 'iso-8859-2', 'windows-1251', 'koi8-r', 'ibm866', 'windows-1253', 'windows-1254', 'windows-1257'] as const) {
+      const known = (b: number): boolean => new TextDecoder(encoding).decode(Uint8Array.of(b)) !== '\ufffd'
+      const bytes = Buffer.from(Array.from({ length: 256 }, (_, i) => i).filter((b) => b !== 0 && b !== 13 && known(b)))
+      expect(bytes.length, encoding).toBeGreaterThan(230)
+      const d = decodeText(bytes, encoding)
+      expect(encodeText(d.text, d.eol, d.bom, encoding).equals(bytes), encoding).toBe(true)
+    }
+    // a byte that means nothing in a character set is refused, not replaced by a question mark
+    expect(() => decodeText(Buffer.from([0x41, 0xaa]), 'windows-1253')).toThrow(/bytes that mean nothing/)
+    const crlf = decodeText(Buffer.from([0x67, 0x72, 0xfc, 0xdf, 0x0d, 0x0a, 0x65, 0x0d, 0x0a]), 'iso-8859-15')
+    expect(crlf).toMatchObject({ text: 'grüß\ne\n', eol: 'crlf' })
+    expect(encodeText('grün\n', 'crlf', false, 'iso-8859-15').equals(Buffer.from([0x67, 0x72, 0xfc, 0x6e, 0x0d, 0x0a]))).toBe(true)
+  })
+
+  it('reads and writes UTF-16 in both byte orders, recognised by the mark at the start', () => {
+    const le = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('Grüße 😀\r\nzwei', 'utf16le')])
+    const d = decodeText(le)
+    expect(d).toEqual({ text: 'Grüße 😀\nzwei', eol: 'crlf', bom: true, encoding: 'utf-16le' })
+    expect(encodeText(d.text, d.eol, d.bom, d.encoding).equals(le)).toBe(true)
+    const be = Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from('añ', 'utf16le').swap16()])
+    const b = decodeText(be)
+    expect(b).toMatchObject({ text: 'añ', bom: true, encoding: 'utf-16be' })
+    expect(encodeText(b.text, b.eol, b.bom, b.encoding).equals(be)).toBe(true)
+  })
+
+  it('refuses to save characters the character set cannot hold, and says which and where', () => {
+    expect(() => encodeText('ok\nGrün 😀\n', 'lf', false, 'koi8-r')).toThrow(/cannot hold “ü”, “😀” \(first in line 2\)/)
+    expect(encodeText('5 €', 'lf', false, 'windows-1252').equals(Buffer.from([0x35, 0x20, 0x80]))).toBe(true)
   })
 })
 
@@ -114,8 +154,25 @@ describe('editing remote files', () => {
 
       await fs.writeFile('/blob.bin', Buffer.from([1, 0, 2, 0]), false)
       await expect(readTextFile(fs, '/blob.bin')).rejects.toThrow(/binary/)
-      await fs.writeFile('/big.txt', Buffer.alloc(2 * 1024 * 1024 + 1, 97), false)
-      await expect(readTextFile(fs, '/big.txt')).rejects.toThrow(/larger than 2 MB/)
+      // files of several megabytes open: read with many requests at once, and still in the right order
+      const big = Buffer.from(Array.from({ length: 5 * 1024 * 1024 + 123 }, (_, i) => 97 + ((i * 7 + (i >> 9)) % 26)))
+      writeFileSync(join(srv.root, 'big.txt'), big)
+      const opened = await readTextFile(fs, '/big.txt')
+      expect(Buffer.from(opened.text).equals(big)).toBe(true)
+      writeFileSync(join(srv.root, 'huge.txt'), Buffer.alloc(32 * 1024 * 1024 + 1, 97))
+      await expect(readTextFile(fs, '/huge.txt')).rejects.toThrow(/larger than 32 MB/)
+
+      // a file in another character set: read as a guess, read again as told, saved in that character set
+      writeFileSync(join(srv.root, 'old.txt'), Buffer.from([0xcf, 0xf0, 0xe8, 0xe2, 0xe5, 0xf2, 0x0a]))
+      expect(await readTextFile(fs, '/old.txt')).toMatchObject({ encoding: 'windows-1252', guessed: true })
+      const cyr = await readTextFile(fs, '/old.txt', 'windows-1251')
+      expect(cyr).toMatchObject({ text: 'Привет\n', encoding: 'windows-1251' })
+      expect((await writeTextFile(fs, '/old.txt', { ...cyr, text: 'Привет, мир\n' }, cyr.version, false)).saved).toBe(true)
+      expect(readFileSync(join(srv.root, 'old.txt')).equals(Buffer.from([0xcf, 0xf0, 0xe8, 0xe2, 0xe5, 0xf2, 0x2c, 0x20, 0xec, 0xe8, 0xf0, 0x0a]))).toBe(true)
+      await expect(writeTextFile(fs, '/old.txt', { ...cyr, text: 'Grüße\n' }, cyr.version, true)).rejects.toThrow(/cannot hold/)
+      // converting: the same text written as UTF-8
+      await writeTextFile(fs, '/old.txt', { ...cyr, encoding: 'utf-8' }, cyr.version, true)
+      expect(readFileSync(join(srv.root, 'old.txt'), 'utf8')).toBe('Привет\n')
       fs.close()
     } finally {
       await srv.close()

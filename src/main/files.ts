@@ -3,10 +3,11 @@ import { existsSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { extname, isAbsolute, join, resolve, sep } from 'node:path'
-import { DEFAULT_TRANSFER_SETTINGS, type ChmodOptions, type FolderSize, type SearchResult, type TreeChange, type ClipboardCopyResult, type CopyResult, type ExistingRule, type HostRecord, type MovePair, type MoveResult, type QueueAction, type RemoteEntry, type SyncAction, type SyncComparison, type SyncOptions, type SyncResult, type TransferSettings, type TransferSnapshot, type WatchStatus } from '@shared/types'
+import { DEFAULT_TRANSFER_SETTINGS, type ChmodOptions, type FolderSize, type SearchResult, type TreeChange, type ClipboardCopyResult, type CopyResult, type ExistingRule, type HostRecord, type MovePair, type MoveResult, type QueueAction, type RemoteEntry, type SyncAction, type SyncComparison, type SyncOptions, type SyncResult, type ExternalEditStatus, type TransferSettings, type TransferSnapshot, type WatchStatus } from '@shared/types'
 import { randomId } from './core/crypto'
 import { driveRoots, watchForDrop } from './core/dropwatch'
 import { safeLocalName, TransferQueue } from './core/queue'
+import { ExternalEdit, readImage } from './core/extedit'
 import { FolderWatch } from './core/keepup'
 import { applySync, compareTrees, deleteCount } from './core/sync'
 import { chmodTree, chownTree, folderSize, searchTree } from './core/remotetools'
@@ -15,7 +16,7 @@ import type { Prompter } from './core/prompter'
 import { openRemoteFs, type RemoteFs } from './core/remotefs'
 import type { Vault } from './core/vault'
 
-type Send = (channel: 'files:queue' | 'files:changed' | 'files:closed' | 'files:searchHits' | 'files:syncProgress' | 'files:watch' | 'files:reconnecting' | 'files:reconnected', ...args: unknown[]) => void
+type Send = (channel: 'files:queue' | 'files:changed' | 'files:closed' | 'files:searchHits' | 'files:syncProgress' | 'files:watch' | 'files:external' | 'files:reconnecting' | 'files:reconnected', ...args: unknown[]) => void
 
 export { safeLocalName }
 
@@ -52,6 +53,8 @@ export interface Desktop {
   dropRoots?(): string[]
   /** Move a file or folder to the trash of the system. Without it, local files cannot be deleted. */
   trash?(path: string): Promise<void>
+  /** Open a local file in the editor the user chose (or the text editor of the system). */
+  openInEditor?(path: string): Promise<void>
 }
 
 const NO_DESKTOP: Desktop = {
@@ -258,6 +261,14 @@ export class FileManager {
 
   private sessionGone(id: string): void {
     for (const [planId, plan] of this.plans) if (plan.sessionId === id) this.plans.delete(planId)
+    let edits = false
+    for (const [editId, edit] of this.edits) {
+      if (edit.status.sessionId !== id) continue
+      void edit.stop()
+      this.edits.delete(editId)
+      edits = true
+    }
+    if (edits) this.editsChanged()
     let stopped = false
     for (const [watchId, w] of this.watches) {
       if (w.status.sessionId !== id) continue
@@ -364,6 +375,61 @@ export class FileManager {
     w.stop()
     this.watches.delete(watchId)
     this.watchesChanged()
+  }
+
+  // ------------------------------------------- preview and external editor ----
+
+  private edits = new Map<string, ExternalEdit>()
+
+  /** A picture of the server as a data URL, for the preview. */
+  readImage(id: string, path: string): Promise<{ dataUrl: string; size: number }> {
+    return readImage(this.get(id), path)
+  }
+
+  private editsChanged(): void {
+    this.quietly(() => this.send('files:external', this.externalList()))
+  }
+
+  externalList(): ExternalEditStatus[] {
+    return [...this.edits.values()].map((e) => ({ ...e.status }))
+  }
+
+  /** Open a file of the server in a program on this computer; every save there is uploaded. */
+  async externalEdit(id: string, entry: RemoteEntry): Promise<ExternalEditStatus> {
+    this.get(id)
+    const launch = this.desktop.openInEditor
+    if (!launch) throw new Error('Opening files in another program is not available here')
+    for (const e of this.edits.values()) {
+      if (e.status.sessionId === id && e.status.remote === entry.path) {
+        // Already open: bring the program up again instead of making a second copy.
+        await launch(e.status.localPath)
+        return { ...e.status }
+      }
+    }
+    const edit = new ExternalEdit(randomId(), id, entry, {
+      fs: () => this.get(id),
+      transfer: (items) => this.queue.pairs(id, this.get(id), items),
+      launch,
+      tempRoot: this.desktop.tempRoot,
+      changed: () => this.editsChanged()
+    })
+    await edit.start()
+    this.edits.set(edit.status.id, edit)
+    this.editsChanged()
+    return { ...edit.status }
+  }
+
+  /** Upload the local copy now, replacing whatever is on the server. */
+  async externalUpload(editId: string): Promise<void> {
+    await this.edits.get(editId)?.sync(true)
+  }
+
+  externalStop(editId: string): void {
+    const edit = this.edits.get(editId)
+    if (!edit) return
+    void edit.stop()
+    this.edits.delete(editId)
+    this.editsChanged()
   }
 
   // ------------------------------------------------- move, copy, conflicts ----

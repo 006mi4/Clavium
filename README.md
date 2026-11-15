@@ -75,6 +75,11 @@
   - when the connection breaks off, Clavium connects again by itself and running transfers continue where
     they stopped; idle FTP connections are kept alive
   - reach a server through a jump host (SSH) or through a SOCKS5 or HTTP proxy (SSH, SFTP, FTP and FTPS)
+  - preview pictures without downloading them, and step through the pictures of a folder with the arrow keys
+  - open a file in your own editor: Clavium uploads it every time you save, and asks before replacing
+    changes someone else made on the server
+  - the built-in editor opens files up to 32 MB and reads and writes UTF-8, UTF-16 and the common Western,
+    Central European, Cyrillic, Greek, Turkish and Baltic character sets
 - **Vault backup**: save the encrypted vault as one file and restore it on this or another PC
 - **Built-in text editor**: double-click a remote file to edit it and save it back to the server
   - several files in tabs, split view (two files or one file twice side by side), new files

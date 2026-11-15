@@ -113,6 +113,8 @@ export interface AppSettings {
   transferExisting: ExistingRule
   /** Keep modification time and permissions of transferred files. */
   transferPreserve: boolean
+  /** Program that opens files for "Open in External Editor". Empty: the text editor of the system. */
+  externalEditor: string
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -126,7 +128,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   transferConcurrency: 3,
   transferLimitKbps: 0,
   transferExisting: 'ask',
-  transferPreserve: true
+  transferPreserve: true,
+  externalEditor: ''
 }
 
 export type VaultState = 'uninitialized' | 'locked' | 'unlocked'
@@ -473,12 +476,35 @@ export interface TextFileVersion {
   modifiedAt: number
 }
 
+/** Character sets the editor can read and write. The names are the ones `TextDecoder` knows. */
+export const TEXT_ENCODINGS = [
+  { id: 'utf-8', label: 'UTF-8' },
+  { id: 'utf-16le', label: 'UTF-16 LE' },
+  { id: 'utf-16be', label: 'UTF-16 BE' },
+  { id: 'windows-1252', label: 'Western European (Windows-1252, ISO 8859-1)' },
+  { id: 'iso-8859-15', label: 'Western European (ISO 8859-15)' },
+  { id: 'macintosh', label: 'Western European (Mac Roman)' },
+  { id: 'windows-1250', label: 'Central European (Windows-1250)' },
+  { id: 'iso-8859-2', label: 'Central European (ISO 8859-2)' },
+  { id: 'windows-1251', label: 'Cyrillic (Windows-1251)' },
+  { id: 'koi8-r', label: 'Cyrillic (KOI8-R)' },
+  { id: 'ibm866', label: 'Cyrillic (DOS 866)' },
+  { id: 'windows-1253', label: 'Greek (Windows-1253)' },
+  { id: 'windows-1254', label: 'Turkish (Windows-1254)' },
+  { id: 'windows-1257', label: 'Baltic (Windows-1257)' }
+] as const
+export type TextEncoding = (typeof TEXT_ENCODINGS)[number]['id']
+export const TEXT_ENCODING_IDS = TEXT_ENCODINGS.map((e) => e.id) as [TextEncoding, ...TextEncoding[]]
+
 export interface TextFile {
   /** always uses 
  line breaks; `eol` remembers what the file had */
   text: string
   eol: 'lf' | 'crlf' | 'mixed'
   bom: boolean
+  encoding: TextEncoding
+  /** The file is not UTF-8 and names no character set: `encoding` is a guess the user may correct. */
+  guessed?: boolean
   version: TextFileVersion
 }
 
@@ -591,4 +617,19 @@ export interface ReconnectStatus {
   attempts: number
   /** Why the connection is gone, or why the last attempt failed. */
   error: string
+}
+
+/** A file of the server that is open in a program on this computer and uploaded on every save. */
+export interface ExternalEditStatus {
+  id: string
+  sessionId: string
+  /** Path on the server. */
+  remote: string
+  name: string
+  /** The local copy the program works on. */
+  localPath: string
+  /** `conflict`: the file changed on the server, nothing is uploaded until the user decides. */
+  state: 'open' | 'uploading' | 'conflict' | 'error'
+  uploads: number
+  lastError?: string
 }

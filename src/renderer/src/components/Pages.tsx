@@ -372,6 +372,36 @@ export function SettingsPage(props: { settings: UiSettings }) {
             <TransferSettingsRows settings={s} set={set} />
           </Group>
 
+          <Group title="External Editor" caption="“Open in External Editor” in the file manager opens a file in this program and uploads it every time you save. Left empty, the text editor of the system is used.">
+            <Row label="Program" multi>
+              <input
+                className="field mono"
+                style={{ flex: 1, minWidth: 0 }}
+                aria-label="Program for editing files"
+                spellCheck={false}
+                placeholder="Text editor of the system"
+                readOnly
+                value={s.externalEditor}
+              />
+              <button
+                type="button"
+                className="btn"
+                onClick={() =>
+                  void api.settings.pickProgram().then((p) => {
+                    if (p) set({ externalEditor: p })
+                  })
+                }
+              >
+                Choose…
+              </button>
+              {s.externalEditor && (
+                <button type="button" className="btn" onClick={() => set({ externalEditor: '' })}>
+                  Reset
+                </button>
+              )}
+            </Row>
+          </Group>
+
           <UpdateGroup auto={s.autoCheckUpdates} setAuto={(v) => set({ autoCheckUpdates: v })} />
 
           {info && (

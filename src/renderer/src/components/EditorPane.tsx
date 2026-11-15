@@ -1,5 +1,6 @@
 import { forwardRef, useDeferredValue, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { ChevronDown, ChevronUp, ClipboardPaste, Copy, CopyPlus, Hash, MessageSquareCode, Replace, Scissors, Search, TextSelect, Trash2, X } from 'lucide-react'
+import { TEXT_ENCODINGS, type TextEncoding } from '@shared/types'
 import { api } from '../api'
 import {
   backspace,
@@ -53,6 +54,10 @@ export const EditorPane = forwardRef<
     unit: string
     eol: 'lf' | 'crlf' | 'mixed'
     bom: boolean
+    encoding: TextEncoding
+    /** the character set is a guess: the file is not UTF-8 and names none */
+    guessed: boolean
+    onEncoding: (how: 'reopen' | 'convert', encoding: TextEncoding) => void
     visible: boolean
     /**
      * false while the same file is being edited in the other pane. The text field then keeps its
@@ -87,6 +92,7 @@ export const EditorPane = forwardRef<
   const [gotoLine, setGotoLine] = useState('')
   const [bodyWidth, setBodyWidth] = useState(0)
   const { text, language, unit } = props
+  const encodingLabel = TEXT_ENCODINGS.find((e) => e.id === props.encoding)?.label ?? props.encoding
   const frozen = useRef(text)
   if (props.live || text.length > HIGHLIGHT_LIMIT) frozen.current = text
   const fieldValue = frozen.current
@@ -591,7 +597,36 @@ export const EditorPane = forwardRef<
         {props.fontSize !== props.defaultFontSize && <span>{Math.round((props.fontSize / props.defaultFontSize) * 100)} %</span>}
         <span>{unit === '\t' ? 'Tabs' : 'Spaces: 2'}</span>
         <span>{props.eol === 'crlf' ? 'CRLF' : props.eol === 'mixed' ? 'Mixed line endings, saved as LF' : 'LF'}</span>
-        <span>UTF-8{props.bom ? ' with BOM' : ''}</span>
+        <select
+          className="status-select"
+          aria-label={`Character set: ${encodingLabel}${props.guessed ? ' (guessed)' : ''}. Choose another one to read the file again or to convert it`}
+          title={props.guessed ? 'This file is not UTF-8. If letters look wrong, read it again with another character set.' : 'Character set'}
+          value=""
+          onChange={(e) => {
+            const [how, enc] = e.target.value.split('|') as ['reopen' | 'convert', TextEncoding]
+            if (enc) props.onEncoding(how, enc)
+          }}
+        >
+          <option value="" hidden>
+            {encodingLabel}
+            {props.bom && props.encoding === 'utf-8' ? ' with BOM' : ''}
+            {props.guessed ? ' (guessed)' : ''}
+          </option>
+          <optgroup label="Read again as">
+            {TEXT_ENCODINGS.map((e) => (
+              <option key={e.id} value={`reopen|${e.id}`}>
+                {e.label}
+              </option>
+            ))}
+          </optgroup>
+          <optgroup label="Convert and save as">
+            {TEXT_ENCODINGS.filter((e) => e.id !== props.encoding).map((e) => (
+              <option key={e.id} value={`convert|${e.id}`}>
+                {e.label}
+              </option>
+            ))}
+          </optgroup>
+        </select>
       </div>
       {menu.element}
     </div>

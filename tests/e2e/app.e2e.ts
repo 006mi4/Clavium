@@ -2,7 +2,7 @@
 // stdio bridge and locking. Run with `npm run test:e2e` (builds first).
 // It also regenerates the screenshots in docs/screenshots (light, plus a few dark ones).
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -77,7 +77,7 @@ beforeAll(async () => {
     executablePath: electronPath,
     args: ['.'],
     cwd: root,
-    env: { ...process.env, CLAVIUM_DATA_DIR: dataDir, CLAVIUM_NO_NOTIFICATIONS: '1', CLAVIUM_NO_AUTOLOCK: '1', ELECTRON_RENDERER_URL: '' }
+    env: { ...process.env, CLAVIUM_DATA_DIR: dataDir, CLAVIUM_NO_NOTIFICATIONS: '1', CLAVIUM_NO_AUTOLOCK: '1', CLAVIUM_NO_EXTERNAL_EDITOR: '1', ELECTRON_RENDERER_URL: '' }
   })
   page = await app.firstWindow()
   await page.setViewportSize({ width: 1280, height: 800 })
@@ -816,6 +816,79 @@ describe('Clavium desktop app', () => {
     }
     await sidebar().locator('.side-item', { hasText: HOST }).last().click()
     await row('readme.txt').waitFor()
+  })
+
+  it('previews pictures, uploads what an external editor saves, and reads other character sets', async () => {
+    const row = (name: string) => view().locator('.table tbody tr:not(.spacer)', { hasText: name })
+    const onServer = (...p: string[]): string => join(srv.root, 'media', ...p)
+    const until = async (what: () => boolean): Promise<void> => {
+      for (let i = 0; i < 400 && !what(); i++) await page.waitForTimeout(50)
+      expect(what()).toBe(true)
+    }
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64')
+    mkdirSync(onServer())
+    writeFileSync(onServer('logo.png'), png)
+    writeFileSync(onServer('photo.png'), png)
+    writeFileSync(onServer('page.txt'), 'from the server')
+    writeFileSync(onServer('old.txt'), Buffer.from([0xcf, 0xf0, 0xe8, 0xe2, 0xe5, 0xf2, 0x0a]))
+    await view().getByRole('button', { name: 'Reload' }).click()
+    await row('media').dblclick()
+    await row('logo.png').waitFor()
+
+    // a picture opens in the preview; the arrow keys go to the next one
+    await row('logo.png').dblclick()
+    let sheet = page.getByRole('dialog')
+    await sheet.getByRole('heading', { name: 'logo.png' }).waitFor()
+    await sheet.getByRole('img', { name: 'logo.png' }).waitFor()
+    await sheet.getByText('Picture 1 of 2').waitFor()
+    await sheet.getByText(/1 × 1 pixels/).waitFor()
+    await page.keyboard.press('ArrowRight')
+    await sheet.getByRole('heading', { name: 'photo.png' }).waitFor()
+    await sheet.getByRole('img', { name: 'photo.png' }).waitFor()
+    await sheet.getByRole('button', { name: 'Close' }).click()
+    await sheet.waitFor({ state: 'detached' })
+
+    // external editor: a local copy is made, and saving it uploads it
+    await row('page.txt').click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Open in External Editor' }).click()
+    const bar = view().locator('.watch-bar', { hasText: '/media/page.txt' })
+    await bar.getByText(/is open in your editor\. Every save is uploaded\./).waitFor()
+    const temp = join(dataDir, 'transfer-tmp')
+    const copy = join(temp, readdirSync(temp).find((n) => n.startsWith('edit-'))!, 'page.txt')
+    expect(readFileSync(copy, 'utf8')).toBe('from the server')
+    writeFileSync(copy, 'saved in another program')
+    await until(() => readFileSync(onServer('page.txt'), 'utf8') === 'saved in another program')
+    await bar.getByText(/Uploaded once/).waitFor()
+    await bar.getByRole('button', { name: 'Stop uploading page.txt' }).click()
+    await bar.waitFor({ state: 'detached' })
+    await until(() => !existsSync(copy))
+
+    // a file that is not UTF-8 opens as a guess; read again with the right character set it can be edited and saved
+    await row('old.txt').dblclick()
+    const text = view().getByLabel('Contents of old.txt')
+    await text.waitFor()
+    const charset = view().getByRole('combobox', { name: /^Character set: Western European \(Windows-1252, ISO 8859-1\) \(guessed\)/ })
+    await charset.selectOption('reopen|windows-1251')
+    await expect.poll(() => text.inputValue()).toBe('Привет\n')
+    await view().getByRole('combobox', { name: /^Character set: Cyrillic \(Windows-1251\)\./ }).waitFor()
+    await text.fill('Привет, мир\n')
+    await view().getByRole('button', { name: 'Save', exact: true }).click()
+    await until(() => readFileSync(onServer('old.txt')).equals(Buffer.from([0xcf, 0xf0, 0xe8, 0xe2, 0xe5, 0xf2, 0x2c, 0x20, 0xec, 0xe8, 0xf0, 0x0a])))
+    await view().getByText('Saved', { exact: true }).waitFor()
+    // converting writes the same text as UTF-8
+    await view().getByRole('combobox', { name: /^Character set: Cyrillic/ }).selectOption('convert|utf-8')
+    await view().getByRole('button', { name: 'Save', exact: true }).click()
+    await until(() => readFileSync(onServer('old.txt'), 'utf8') === 'Привет, мир\n')
+
+    await view().getByRole('tab', { name: /old\.txt/ }).click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Close', exact: true }).click()
+    // with the last tab closed the file list comes back by itself
+    const back = view().getByRole('button', { name: 'Back to Files' })
+    if (await back.count()) await back.click()
+    await view().getByRole('button', { name: 'Enclosing Folder' }).click()
+    rmSync(join(srv.root, 'media'), { recursive: true, force: true })
+    await view().getByRole('button', { name: 'Reload' }).click()
+    await row('media').waitFor({ state: 'detached' })
   })
 
   let token = ''

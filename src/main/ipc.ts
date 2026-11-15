@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { app, clipboard, dialog, ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { z } from 'zod'
 import type { AppInfo, InvokeChannel } from '@shared/ipc'
-import { FTP_ENCODINGS, PROXY_TYPES, type HostRecord, type HostSummary, type PromptResponse, type RemoteEntry } from '@shared/types'
+import { FTP_ENCODINGS, PROXY_TYPES, TEXT_ENCODING_IDS, type HostRecord, type HostSummary, type PromptResponse, type RemoteEntry } from '@shared/types'
 import type { AuditLog } from './core/audit'
 import { randomId } from './core/crypto'
 import { buildKeyRecord, generateKey, summarizeKey } from './core/keys'
@@ -284,6 +284,12 @@ export function registerIpc(ctx: IpcContext): void {
     const { mcpTokenHash: _h, ...rest } = ctx.settings.get()
     return rest
   })
+  handle('settings:pickProgram', z.tuple([]), async () => {
+    const win = ctx.window()
+    if (!win) return null
+    const r = await dialog.showOpenDialog(win, { title: 'Choose the editor', properties: ['openFile'], ...(process.platform === 'darwin' ? { defaultPath: '/Applications' } : {}) })
+    return r.canceled ? null : (r.filePaths[0] ?? null)
+  })
   handle('settings:set', z.tuple([settingsSchema.omit({ mcpTokenHash: true }).partial()]), async (patch) => {
     await ctx.settings.set(patch)
     await ctx.mcp.apply()
@@ -350,13 +356,13 @@ export function registerIpc(ctx: IpcContext): void {
   handle('files:rename', z.tuple([id, remotePath, remotePath]), (fid, a, b) => ctx.files.get(fid).rename(a, b))
   handle('files:stat', z.tuple([id, remotePath]), (fid, p) => ctx.files.get(fid).stat(p))
   handle('files:createFile', z.tuple([id, remotePath]), (fid, p) => ctx.files.get(fid).writeFile(p, Buffer.alloc(0), false))
-  handle('files:readText', z.tuple([id, remotePath]), (fid, p) => readTextFile(ctx.files.get(fid), p))
+  handle('files:readText', z.tuple([id, remotePath, z.enum(TEXT_ENCODING_IDS).nullable()]), (fid, p, encoding) => readTextFile(ctx.files.get(fid), p, encoding ?? undefined))
   handle(
     'files:writeText',
     z.tuple([
       id,
       remotePath,
-      z.object({ text: z.string().max(MAX_TEXT_BYTES + 1024), eol: z.enum(['lf', 'crlf', 'mixed']), bom: z.boolean() }),
+      z.object({ text: z.string().max(MAX_TEXT_BYTES + 1024), eol: z.enum(['lf', 'crlf', 'mixed']), bom: z.boolean(), encoding: z.enum(TEXT_ENCODING_IDS).optional() }),
       z.object({ size: z.number(), modifiedAt: z.number() }),
       z.boolean()
     ]),
@@ -441,6 +447,11 @@ export function registerIpc(ctx: IpcContext): void {
   handle('files:watchStart', z.tuple([id, remotePath, localDir]), (fid, remote, local) => ctx.files.watchStart(fid, remote, local))
   handle('files:watchStop', z.tuple([id]), (watchId) => ctx.files.watchStop(watchId))
   handle('files:watchList', z.tuple([]), () => ctx.files.watchList())
+  handle('files:readImage', z.tuple([id, remotePath]), (fid, p) => ctx.files.readImage(fid, p))
+  handle('files:externalEdit', z.tuple([id, entrySchema]), (fid, entry) => ctx.files.externalEdit(fid, entry as RemoteEntry))
+  handle('files:externalUpload', z.tuple([id]), (editId) => ctx.files.externalUpload(editId))
+  handle('files:externalStop', z.tuple([id]), (editId) => ctx.files.externalStop(editId))
+  handle('files:externalList', z.tuple([]), () => ctx.files.externalList())
   handle('files:queueGet', z.tuple([]), () => ctx.files.transfers())
   handle(
     'files:queueAction',

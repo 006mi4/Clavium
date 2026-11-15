@@ -16,6 +16,8 @@ import {
   FolderPlus,
   FolderSearch,
   FolderSync,
+  Image as ImageIcon,
+  SquarePen,
   FolderTree as FolderTreeIcon,
   Info,
   Star,
@@ -30,10 +32,11 @@ import {
   Upload,
   X
 } from 'lucide-react'
-import type { HostSummary, MovePair, ReconnectStatus, RemoteEntry, WatchStatus } from '@shared/types'
+import type { ExternalEditStatus, HostSummary, MovePair, ReconnectStatus, RemoteEntry, WatchStatus } from '@shared/types'
 import { api, on } from '../api'
 import { TransferPanel } from './Transfers'
 import { SyncSheet, WatchBar } from './SyncSheet'
+import { ExternalBar, ImagePreview, isImage } from './FileExtras'
 import { FolderTree, PropertiesSheet, SearchSheet, countOf, joinPath as join, parentOf } from './FileTools'
 import { Empty, IconButton, Sheet, Toolbar, formatBytes, formatDate, useConfirm, useMenu, useToast, type MenuItem } from '../ui'
 import { StatusDot, type ConnState } from './TerminalView'
@@ -154,9 +157,24 @@ export function FilesView(props: {
     setRequest({ entry, nonce: Date.now() })
     setMode('editor')
   }
+  const [preview, setPreview] = useState<RemoteEntry | null>(null)
+  const [allEdits, setEdits] = useState<ExternalEditStatus[]>([])
+  const externalEdits = useMemo(() => allEdits.filter((e) => e.sessionId === sid), [allEdits, sid])
+  useEffect(() => {
+    void api.files.externalList().then(setEdits, () => undefined)
+    return on('files:external', (list: ExternalEditStatus[]) => setEdits(list))
+  }, [])
+  const editExternally = (entry: RemoteEntry): void => {
+    if (!sidRef.current) return
+    api.files
+      .externalEdit(sidRef.current, entry)
+      .then(() => toast.ok(`“${entry.name}” is open in your editor. Every save is uploaded.`))
+      .catch((e) => toast.error(e))
+  }
   const workspaceApi = useRef<WorkspaceApi | null>(null)
   /** Double-click or Enter: folders are opened, files edited. A link may point to either. */
   const openEntry = (entry: RemoteEntry): void => {
+    if (isImage(entry)) return setPreview(entry)
     if (entry.type === 'file') return edit(entry)
     if (entry.type !== 'link' || !sidRef.current) return void load(entry.path)
     api.files
@@ -600,7 +618,9 @@ export function FilesView(props: {
     }
     const list: MenuItem[] = []
     if (items.length === 1 && entry.type !== 'file') list.push({ label: 'Open', icon: Folder, onSelect: () => void load(entry.path) })
+    if (items.length === 1 && isImage(entry)) list.push({ label: 'Preview', icon: ImageIcon, onSelect: () => setPreview(entry) })
     if (items.length === 1 && entry.type === 'file') list.push({ label: 'Edit', icon: FilePenLine, onSelect: () => edit(entry) })
+    if (items.length === 1 && entry.type === 'file') list.push({ label: 'Open in External Editor', icon: SquarePen, onSelect: () => editExternally(entry) })
     list.push({ label: items.length > 1 ? `Download ${items.length} Items` : 'Download…', icon: Download, onSelect: () => download(items) })
     list.push(
       'separator',
@@ -892,6 +912,7 @@ export function FilesView(props: {
               </div>
             )}
             <WatchBar watches={watches} />
+            <ExternalBar edits={externalEdits} />
             <div className="file-split">
             {showTree && sid && (
               <FolderTree sid={sid} cwd={cwd} showHidden={showHidden} listing={listing} onOpen={(p) => void load(p)} dropProps={dropProps} onDragLeave={() => setDropTarget(null)} />
@@ -1003,6 +1024,7 @@ export function FilesView(props: {
       {propsFor && sid && (
         <PropertiesSheet sid={sid} canChown={props.host.protocol === 'ssh'} items={propsFor} close={() => setPropsFor(null)} changed={() => void load(cwdRef.current)} />
       )}
+      {preview && sid && <ImagePreview sid={sid} images={entries.filter(isImage)} start={preview} onDownload={(e) => download([e])} close={() => setPreview(null)} />}
       {syncing && sid && <SyncSheet sid={sid} hostId={props.host.id} remoteDir={cwd} watching={watches} close={() => setSyncing(false)} />}
       {searching && sid && <SearchSheet sid={sid} root={cwd} onReveal={revealHit} close={() => setSearching(false)} />}
     </>

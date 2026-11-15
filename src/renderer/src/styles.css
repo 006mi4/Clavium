@@ -587,6 +587,11 @@ select.field option { background: var(--bg-elevated); color: var(--text); }
 .note p { margin: 0; }
 .note p + p, .note p + details { margin-top: 4px; }
 .note .mono { font-family: var(--mono); overflow-wrap: anywhere; }
+.image-preview { position: relative; display: grid; place-items: center; min-height: 220px; max-height: 62vh; overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: repeating-conic-gradient(var(--fill) 0% 25%, transparent 0% 50%) 50% / 20px 20px; }
+.image-preview img { max-width: 100%; max-height: 60vh; object-fit: contain; display: block; }
+.image-preview img.stale { opacity: 0.35; }
+.image-preview .spinner { position: absolute; }
+.image-preview p { padding: 20px; color: var(--text); background: var(--bg-elevated); border-radius: 8px; }
 .reconnect-bar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; font-size: 12px; border-bottom: 1px solid var(--line); background: var(--orange-fill); }
 .reconnect-bar .what { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .spinner.small { width: 14px; height: 14px; border-width: 2px; flex-shrink: 0; }

@@ -41,9 +41,9 @@ Not part of this roadmap: a local file pane, and importing sites from FileZilla,
 - [x] Jump host and proxy (SOCKS5, HTTP CONNECT) for SSH and SFTP; proxy also for FTP and FTPS
 - [x] Reconnect automatically and continue running transfers
 - [x] Keepalive for FTP
-- [ ] External editor with upload on save
-- [ ] Image preview
-- [ ] Built-in editor beyond 2 MB and with more character sets than UTF-8
+- [x] External editor with upload on save
+- [x] Image preview
+- [x] Built-in editor beyond 2 MB (now 32 MB) and with more character sets than UTF-8
 
 ## Open points from finished packages
 
@@ -63,6 +63,12 @@ Not part of this roadmap: a local file pane, and importing sites from FileZilla,
   real sockets, and a channel of an SSH session is not one.
 - [ ] Package D: FTPS through a proxy (explicit and implicit TLS) is built like plain FTP through
   a proxy but has no automated test: the FTP test server runs without TLS.
+- [ ] Package D: the editor reads and writes UTF-8, UTF-16 and eleven character sets with one byte
+  per character. East Asian character sets (Shift JIS, GBK, Big5, EUC-KR) are missing: they can
+  be read with what the runtime has, but writing them needs tables Clavium does not carry.
+- [ ] Package D: starting the external editor itself (`open -t`, `notepad.exe`, or the program
+  from the settings) is not covered by a test; the tests replace that step. Everything after it
+  (local copy, watching, uploading, conflict) is tested.
 - [ ] Package D: only file sessions reconnect by themselves. A terminal still shows "Session
   Ended" and is reconnected by hand.
 - [ ] Package C: finding the shift of the server clock is tested against the FTP test server on
@@ -70,8 +76,29 @@ Not part of this roadmap: a local file pane, and importing sites from FileZilla,
 
 ## Status
 
-Packages A, B and C are finished. Of package D the connection part is finished; the editor part
-(external editor, image preview, large files and character sets) is open.
+All four packages are finished. What is left is listed under "Open points" above.
+
+### How the editor part of package D is built
+
+- `src/main/core/textfile.ts`: `decodeText` finds the character set (mark at the start, else
+  UTF-8 if the bytes are clean UTF-8, else Windows-1252 as a guess that is marked as one) or reads
+  with the one it is told. `encodeText` writes it back byte for byte and refuses characters the
+  character set cannot hold, and bytes that mean nothing in a character set are refused when
+  reading, so nothing is damaged silently. The limit is 32 MB; SFTP reads large files with 16
+  requests at once.
+- The status bar of the editor has one list for the character set: "Read again as" (when letters
+  look wrong) and "Convert and save as".
+- `src/main/core/extedit.ts`: `readImage` hands a picture to the preview as a data URL (the
+  content security policy allows nothing else), up to 16 MB. `ExternalEdit` downloads a file
+  into a private folder, opens it in an editor and uploads it at every save. The folder is
+  watched, not the file, because many editors save by renaming. A file that changed on the
+  server in the meantime is not replaced until the user says so.
+- The file is always handed to an editor program as an argument (`open -t` on macOS,
+  `notepad.exe` on Windows, or the program chosen in the settings) and never started itself: its
+  name and content come from a server.
+- Interface: `src/renderer/src/components/FileExtras.tsx` (preview sheet and the status bar of
+  externally edited files), the row "External Editor" in the settings.
+- Tests: `tests/extedit.test.ts`, `tests/editor.test.ts`, and one scenario in `tests/e2e/app.e2e.ts`.
 
 ### How the connection part of package D is built
 
