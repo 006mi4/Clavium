@@ -1,13 +1,14 @@
 import { existsSync, watch, type FSWatcher } from 'node:fs'
 import { readFile, unlink } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
 /**
  * Finds the folder a file was dropped into.
  *
- * Windows only tells a program that a drag has ended, not where the item landed. So a small marker
- * file with an unguessable name is dragged, and the drives are watched for the moment Windows
- * copies it somewhere. The folder it appears in is the drop target. The marker is then removed
+ * Windows and macOS only tell a program that a drag has ended, not where the item landed. So a
+ * small marker file with an unguessable name is dragged, and the drives are watched for the moment
+ * Explorer or Finder copies it somewhere. The folder it appears in is the drop target. The marker is then removed
  * again — but only after its content has been checked, so that no other file is ever deleted.
  */
 export interface DropWatch {
@@ -16,8 +17,12 @@ export interface DropWatch {
   stop(): void
 }
 
-/** Roots of all drives that currently exist (Windows), or the file system root elsewhere. */
+/**
+ * Roots of all drives that currently exist (Windows). On macOS the home folder and the mounted
+ * volumes, which is where Finder windows and the desktop live; elsewhere the file system root.
+ */
 export function driveRoots(): string[] {
+  if (process.platform === 'darwin') return [homedir(), '/Volumes'].filter((root) => existsSync(root))
   if (process.platform !== 'win32') return ['/']
   return 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
     .split('')

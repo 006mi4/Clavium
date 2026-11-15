@@ -7,7 +7,7 @@ import { watchForDrop } from '../src/main/core/dropwatch'
 import { openRemoteFs, type RemoteFs } from '../src/main/core/remotefs'
 import { conflictsIn, copyEntries, isInside, measure, moveEntries } from '../src/main/core/transfer'
 import { FileManager, type Desktop } from '../src/main/files'
-import { readClipboardFiles, writeClipboardFiles } from '../src/main/winclipboard'
+import { readClipboardFiles, writeClipboardFiles } from '../src/main/fileclipboard'
 import { newUnlockedVault, recordingPrompter, sshHost } from './helpers/fixtures'
 import { startTestSshServer, type TestSshServer } from './helpers/testServer'
 
@@ -250,13 +250,13 @@ describe('file manager', () => {
     expect(await t.fm.copy(t.id, [index], t.id, '/inbox')).toEqual({ created: ['/inbox/index.html'] })
     expect(await text('/inbox/index.html')).toBe('<h1>hi</h1>')
     expect(t.progress.at(-1)).toMatchObject({ direction: 'copy', done: true, name: 'index.html' })
-    expect(await t.fm.uploadConflicts(t.id, '/inbox', ['C:\\x\\index.html', 'C:\\x\\other.txt'])).toEqual(['index.html'])
+    expect(await t.fm.uploadConflicts(t.id, '/inbox', [join(tmpdir(), 'x', 'index.html'), join(tmpdir(), 'x', 'other.txt')])).toEqual(['index.html'])
     t.fm.closeAll()
   })
 })
 
 // Uses the real clipboard of this computer, so it only runs when asked for.
-describe.runIf(process.platform === 'win32' && process.env.CLAVIUM_TEST_CLIPBOARD)('Windows clipboard', () => {
+describe.runIf((process.platform === 'win32' || process.platform === 'darwin') && process.env.CLAVIUM_TEST_CLIPBOARD)('System clipboard', () => {
   it('writes and reads file lists, including names with spaces and umlauts', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'clavium-clip test-'))
     const a = join(dir, 'Übersicht 2026.txt')

@@ -23,8 +23,9 @@
     "test": "vitest run",
     "test:e2e": "electron-vite build && vitest run -c vitest.e2e.config.mts",
     "icon": "node scripts/make-icon.mjs",
-    "dist": "npm run typecheck && npm run build && electron-builder --win --publish never",
-    "dist:dir": "npm run build && electron-builder --win --dir --publish never"
+    "dist": "npm run typecheck && npm run build && electron-builder --publish never",
+    "dist:dir": "npm run build && electron-builder --dir --publish never",
+    "dist:mac:adhoc": "npm run typecheck && npm run build && electron-builder --mac --publish never -c.mac.identity=- -c.mac.hardenedRuntime=false"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",

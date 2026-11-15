@@ -45,7 +45,7 @@ export function HostsPage(props: {
   const [query, setQuery] = useState('')
   const [editing, setEditing] = useState<HostSummary | 'new' | null>(null)
 
-  // Ctrl+N from the app shell
+  // Ctrl+N (Cmd+N on macOS) from the app shell
   useEffect(() => {
     if (props.newHostSignal > 0) setEditing('new')
   }, [props.newHostSignal])

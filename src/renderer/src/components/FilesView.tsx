@@ -34,6 +34,7 @@ import { StatusDot, type ConnState } from './TerminalView'
 import { registerEditorSession } from '../editor/registry'
 import { getRemoteClip, lastUndo, popUndo, pushUndo, setRemoteClip, subscribeFileOps } from '../fileops'
 import { EditorWorkspace, type WorkspaceApi } from './EditorWorkspace'
+import { FILE_MANAGER, OS_NAME, isMac, keys, mod } from '../platform'
 
 function parentOf(p: string): string {
   if (p === '/' || !p.includes('/')) return '/'
@@ -261,11 +262,11 @@ export function FilesView(props: {
 
   const clickRow = (e: MouseEvent, entry: RemoteEntry, index: number): void => {
     setSelected((prev) => {
-      const next = new Set(e.ctrlKey ? prev : [])
+      const next = new Set(mod(e) ? prev : [])
       if (e.shiftKey && lastClicked.current >= 0) {
         const [a, b] = [lastClicked.current, index].sort((x, y) => x - y)
         entries.slice(a, b + 1).forEach((x) => next.add(x.path))
-      } else if (e.ctrlKey && prev.has(entry.path)) next.delete(entry.path)
+      } else if (mod(e) && prev.has(entry.path)) next.delete(entry.path)
       else next.add(entry.path)
       return next
     })
@@ -325,7 +326,7 @@ export function FilesView(props: {
       const r = await api.files.move(sid, pairs)
       if (r.moved.length) {
         pushUndo(props.host.id, { kind: 'move', label, pairs: r.moved })
-        if (done) toast.ok(`${done} Press Ctrl+Z to undo.`)
+        if (done) toast.ok(`${done} Press ${keys('Ctrl+Z')} to undo.`)
       }
       for (const f of r.failed) toast.error(`${f.name}: ${f.error}`)
     } catch (e) {
@@ -392,10 +393,10 @@ export function FilesView(props: {
   const copyItems = async (items: RemoteEntry[], mode: 'copy' | 'cut'): Promise<void> => {
     if (!sid || items.length === 0) return
     setRemoteClip({ hostId: props.host.id, sid, entries: items, mode })
-    toast.ok(`${mode === 'cut' ? 'Cut' : 'Copied'} ${countOf(items.length)}. Paste with Ctrl+V.`)
+    toast.ok(`${mode === 'cut' ? 'Cut' : 'Copied'} ${countOf(items.length)}. Paste with ${keys('Ctrl+V')}.`)
     try {
       const r = await api.files.clipboardCopy(sid, items, mode === 'copy')
-      if (r === 'too-large') toast.info('Too large for the Windows clipboard. You can paste it inside Clavium, or drag it out to download it.')
+      if (r === 'too-large') toast.info(`Too large for the ${OS_NAME} clipboard. You can paste it inside Clavium, or drag it out to download it.`)
     } catch (e) {
       toast.error(e)
     }
@@ -406,7 +407,7 @@ export function FilesView(props: {
       const local = await api.files.clipboardFiles()
       if (local.length) return void (await uploadTo(dir, local))
       const clip = getRemoteClip()
-      if (!clip) return toast.info('Nothing to paste. Copy files here or in Windows first.')
+      if (!clip) return toast.info(`Nothing to paste. Copy files here or in ${FILE_MANAGER} first.`)
       const sameHost = clip.hostId === props.host.id
       if (clip.mode === 'cut' && sameHost) {
         if (!canMove(clip.entries, dir)) return toast.info('These items are already in this folder.')
@@ -465,17 +466,17 @@ export function FilesView(props: {
     list.push({ label: items.length > 1 ? `Download ${items.length} Items` : 'Download…', icon: Download, onSelect: () => download(items) })
     list.push(
       'separator',
-      { label: 'Cut', icon: Scissors, hint: 'Ctrl+X', onSelect: () => void copyItems(items, 'cut') },
-      { label: 'Copy', icon: Copy, hint: 'Ctrl+C', onSelect: () => void copyItems(items, 'copy') }
+      { label: 'Cut', icon: Scissors, hint: keys('Ctrl+X'), onSelect: () => void copyItems(items, 'cut') },
+      { label: 'Copy', icon: Copy, hint: keys('Ctrl+C'), onSelect: () => void copyItems(items, 'copy') }
     )
     if (items.length === 1 && entry.type === 'dir') {
       list.push({ label: 'Paste into Folder', icon: ClipboardPaste, onSelect: () => void paste(entry.path) })
     } else {
-      list.push({ label: 'Paste', icon: ClipboardPaste, hint: 'Ctrl+V', onSelect: () => void paste(cwd) })
+      list.push({ label: 'Paste', icon: ClipboardPaste, hint: keys('Ctrl+V'), onSelect: () => void paste(cwd) })
     }
     if (items.length === 1) list.push({ label: 'Rename…', icon: Pencil, hint: 'F2', onSelect: () => rename(entry) })
     list.push({ label: 'Permissions…', icon: KeyRound, onSelect: () => setPermsFor(items) })
-    list.push('separator', { label: 'Delete…', icon: Trash2, hint: 'Del', destructive: true, onSelect: () => void remove(items) })
+    list.push('separator', { label: 'Delete…', icon: Trash2, hint: keys('Del', '⌘⌫'), destructive: true, onSelect: () => void remove(items) })
     menu.openAt(e, list)
   }
   const toggleHidden = (): void => {
@@ -496,8 +497,8 @@ export function FilesView(props: {
   }
   const areaMenu = (e: MouseEvent): void => {
     menu.openAt(e, [
-      { label: 'Paste', icon: ClipboardPaste, hint: 'Ctrl+V', onSelect: () => void paste(cwd) },
-      { label: undoStep ? `Undo ${undoStep.label}` : 'Undo', icon: Undo2, hint: 'Ctrl+Z', disabled: !undoStep, onSelect: () => void undo() },
+      { label: 'Paste', icon: ClipboardPaste, hint: keys('Ctrl+V'), onSelect: () => void paste(cwd) },
+      { label: undoStep ? `Undo ${undoStep.label}` : 'Undo', icon: Undo2, hint: keys('Ctrl+Z'), disabled: !undoStep, onSelect: () => void undo() },
       'separator',
       { label: 'New File…', icon: FilePlus2, onSelect: newFile },
       { label: 'New Folder…', icon: FolderPlus, onSelect: newFolder },
@@ -510,8 +511,8 @@ export function FilesView(props: {
   }
 
   // ---- drag and drop ----
-  // Rows are dragged as a real Windows file drag, so they can be dropped on the desktop or in
-  // Explorer. Dropped inside this window, the same drag moves the items on the server instead.
+  // Rows are dragged as a real file drag of the system, so they can be dropped on the desktop or
+  // in Explorer or Finder. Dropped inside this window, the same drag moves the items on the server instead.
   const startDrag = (e: DragEvent, entry: RemoteEntry): void => {
     e.preventDefault()
     if (!sid) return
@@ -554,7 +555,7 @@ export function FilesView(props: {
       void uploadTo(dir, [...e.dataTransfer.files].map((f) => window.clavium.pathForFile(f)).filter(Boolean))
     }
   })
-  // Ctrl+C / X / V / Z work whenever this file list is on screen, not only while it has the
+  // Ctrl+C / X / V / Z (Cmd on macOS) work whenever this file list is on screen, not only while it has the
   // keyboard focus (which is lost after every dialog). Text fields and open dialogs keep them.
   const areaRef = useRef<HTMLDivElement>(null)
   const shortcuts = useRef<Record<string, () => void>>({})
@@ -568,7 +569,7 @@ export function FilesView(props: {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const action = shortcuts.current[e.key.toLowerCase()]
-      if (!action || !e.ctrlKey || e.shiftKey || e.altKey || e.defaultPrevented) return
+      if (!action || !mod(e) || e.shiftKey || e.altKey || e.defaultPrevented) return
       if (!areaRef.current || areaRef.current.offsetParent === null) return // another tab or the editor is showing
       const el = e.target as HTMLElement
       if (el.closest('input, textarea, select, [contenteditable], [role="dialog"]')) return
@@ -729,11 +730,12 @@ export function FilesView(props: {
               }}
               onContextMenu={areaMenu}
               onKeyDown={(e) => {
-                if (e.key === 'Delete') void remove(selEntries)
-                if (e.key === 'Backspace') void load(parentOf(cwd))
+                // Mac keyboards have no Delete key: Finder deletes with Cmd+Backspace.
+                if (e.key === 'Delete' || (isMac && e.metaKey && e.key === 'Backspace')) void remove(selEntries)
+                else if (e.key === 'Backspace') void load(parentOf(cwd))
                 if (e.key === 'Enter' && selEntries.length === 1) openEntry(selEntries[0])
                 if (e.key === 'F2' && selEntries.length === 1) rename(selEntries[0])
-                if (e.ctrlKey && e.key.toLowerCase() === 'a') {
+                if (mod(e) && e.key.toLowerCase() === 'a') {
                   e.preventDefault()
                   setSelected(new Set(entries.map((x) => x.path)))
                 }
@@ -798,7 +800,7 @@ export function FilesView(props: {
                   </Empty>
                 ) : (
                   <Empty icon={Folder} title="This Folder Is Empty">
-                    Drag files or folders from Windows into this window to upload them.
+                    Drag files or folders from {FILE_MANAGER} into this window to upload them.
                   </Empty>
                 ))
               )}

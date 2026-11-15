@@ -10,8 +10,11 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { _electron, type ElectronApplication, type Locator, type Page } from 'playwright-core'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { readClipboardFiles, writeClipboardFiles } from '../../src/main/winclipboard'
+import { readClipboardFiles, writeClipboardFiles } from '../../src/main/fileclipboard'
 import { startTestSshServer, TEST_PASSWORD, TEST_USER, type TestSshServer } from '../helpers/testServer'
+
+// macOS has its own keys for a few shortcuts (Cmd+H hides the app, Home only scrolls).
+const MAC = process.platform === 'darwin'
 
 const root = resolve(__dirname, '../..')
 const electronPath = createRequire(import.meta.url)('electron') as unknown as string
@@ -150,19 +153,19 @@ describe('Clavium desktop app', () => {
     const original = await area.inputValue()
     const lines = async (): Promise<string[]> => (await area.inputValue()).split('\n')
 
-    await area.press('Control+g')
+    await area.press('ControlOrMeta+g')
     await view().getByLabel('Go to line').fill('4')
     await page.keyboard.press('Enter')
     await view().getByText('Line 4, Column 1').waitFor()
 
-    await page.keyboard.press('Control+d') // duplicate line
+    await page.keyboard.press('ControlOrMeta+d') // duplicate line
     expect((await lines()).filter((l) => l === '    image: nginx:stable')).toHaveLength(2)
-    await page.keyboard.press('Control+z') // undo restores it
+    await page.keyboard.press('ControlOrMeta+z') // undo restores it
     expect(await area.inputValue()).toBe(original)
 
-    await page.keyboard.press('Control+/') // comment / uncomment
+    await page.keyboard.press('ControlOrMeta+/') // comment / uncomment
     expect((await lines())[3]).toBe('    # image: nginx:stable')
-    await page.keyboard.press('Control+/')
+    await page.keyboard.press('ControlOrMeta+/')
     expect(await area.inputValue()).toBe(original)
 
     await page.keyboard.press('Alt+ArrowDown') // move line down and back up
@@ -170,14 +173,14 @@ describe('Clavium desktop app', () => {
     await page.keyboard.press('Alt+ArrowUp')
     expect(await area.inputValue()).toBe(original)
 
-    await page.keyboard.press('Control+l') // delete line
+    await page.keyboard.press('ControlOrMeta+l') // delete line
     expect(await lines()).not.toContain('    image: nginx:stable')
-    await page.keyboard.press('Control+z')
+    await page.keyboard.press('ControlOrMeta+z')
     expect(await area.inputValue()).toBe(original)
 
     // find with match count, then replace all and undo it in one step
-    await area.press('Control+Home') // search starts at the caret
-    await page.keyboard.press('Control+h')
+    await area.press(MAC ? 'Meta+ArrowUp' : 'Control+Home') // search starts at the caret
+    await page.keyboard.press(MAC ? 'Meta+Alt+f' : 'Control+h')
     await view().getByLabel('Find in file').fill('nginx')
     await view().getByText('2', { exact: true }).waitFor()
     expect(await view().locator('.editor-marks mark').count()).toBe(2)
@@ -189,7 +192,7 @@ describe('Clavium desktop app', () => {
     await shot('06c-editor-find', true)
     await view().getByRole('button', { name: 'Replace All' }).click()
     expect(await area.inputValue()).toBe(original.replaceAll('nginx', 'caddy'))
-    await area.press('Control+z')
+    await area.press('ControlOrMeta+z')
     expect(await area.inputValue()).toBe(original)
 
     // regular expressions and invalid input
@@ -210,7 +213,7 @@ describe('Clavium desktop app', () => {
     await area.click({ button: 'right', position: { x: 60, y: 70 } })
     await page.getByRole('menuitem', { name: 'Duplicate Line' }).click()
     expect((await lines()).length).toBe(original.split('\n').length + 1)
-    await area.press('Control+z')
+    await area.press('ControlOrMeta+z')
     expect(await area.inputValue()).toBe(original)
 
     // wrapping long lines keeps one number per real line
@@ -236,7 +239,7 @@ describe('Clavium desktop app', () => {
     expect(await view().locator('.ed-pane').count()).toBe(2)
     const both = view().getByLabel('Contents of readme.txt')
     expect(await both.count()).toBe(2) // the same file, side by side
-    await both.nth(1).press('Control+End')
+    await both.nth(1).press('ControlOrMeta+End')
     await page.keyboard.type('typed in the right pane')
     const leftView = view().locator('.ed-pane').first().locator('.editor-layer pre').last()
     await expect.poll(() => leftView.innerText()).toContain('typed in the right pane') // both views show the same text
@@ -244,10 +247,12 @@ describe('Clavium desktop app', () => {
     // and keeps working while the file is open twice
     let undoSteps = 0
     while ((await both.nth(1).inputValue()).length > 'Hello from the test server'.length + 1 && undoSteps < 30) {
-      await both.nth(1).press('Control+z')
+      await both.nth(1).press('ControlOrMeta+z')
       undoSteps++
     }
-    expect(undoSteps).toBeLessThanOrEqual(6)
+    // 23 characters were typed. How they are grouped depends on how fast they arrive, so a slow
+    // machine needs a few steps more.
+    expect(undoSteps).toBeLessThanOrEqual(10)
     expect(await both.nth(1).inputValue()).toBe('Hello from the test server\n')
     await expect.poll(() => leftView.innerText()).not.toContain('typed in the right pane')
     await both.nth(0).click() // switching sides brings the other text field up to date
@@ -271,18 +276,18 @@ describe('Clavium desktop app', () => {
     await notes.waitFor()
     await notes.click()
     await page.keyboard.type('# Notes')
-    await page.keyboard.press('Control+s')
+    await page.keyboard.press('ControlOrMeta+s')
     await expect.poll(() => (existsSync(join(srv.root, 'notes.md')) ? readFileSync(join(srv.root, 'notes.md'), 'utf8') : '')).toBe('# Notes')
     await view().getByText('Saved', { exact: true }).waitFor()
-    await page.keyboard.press('Control+w')
+    await page.keyboard.press('ControlOrMeta+w')
     await expect.poll(() => view().getByRole('tab').count()).toBe(1)
 
     // --- saving ---
     await area.click()
-    await area.press('Control+End')
+    await area.press('ControlOrMeta+End')
     await page.keyboard.type('      DEBUG: "false"')
     await view().getByText('Edited').waitFor()
-    await page.keyboard.press('Control+s')
+    await page.keyboard.press('ControlOrMeta+s')
     await view().getByText('Saved', { exact: true }).waitFor()
     const onServer = readFileSync(remoteFile, 'utf8')
     expect(onServer.endsWith(['      WORKERS: 4', '      DEBUG: "false"'].join('\n'))).toBe(true)
@@ -291,7 +296,7 @@ describe('Clavium desktop app', () => {
     // a file changed behind our back is not overwritten without asking
     await page.keyboard.type(' # mine')
     writeFileSync(remoteFile, 'changed on the server by someone else')
-    await page.keyboard.press('Control+s')
+    await page.keyboard.press('ControlOrMeta+s')
     await page.getByText('The File Changed on the Server').waitFor()
     await page.getByRole('button', { name: 'Cancel' }).click()
     expect(readFileSync(remoteFile, 'utf8')).toBe('changed on the server by someone else')
@@ -339,11 +344,11 @@ describe('Clavium desktop app', () => {
 
     // cut with Ctrl+X, paste into another folder with Ctrl+V
     await row('readme.txt').click()
-    await page.keyboard.press('Control+x')
+    await page.keyboard.press('ControlOrMeta+x')
     await view().locator('.table tr[data-cut]', { hasText: 'readme.txt' }).waitFor()
     await row('scripts').dblclick()
     await view().getByText('This Folder Is Empty').waitFor()
-    await page.keyboard.press('Control+v')
+    await page.keyboard.press('ControlOrMeta+v')
     await row('readme.txt').waitFor()
     expect(has('scripts', 'readme.txt')).toBe(true)
     expect(has('readme.txt')).toBe(false)
@@ -375,11 +380,11 @@ describe('Clavium desktop app', () => {
     await page.getByRole('button', { name: 'Rename', exact: true }).click()
     await until(() => has('compose-copy.yml'))
     await view().locator('.file-area').focus()
-    await page.keyboard.press('Control+z')
+    await page.keyboard.press('ControlOrMeta+z')
     await until(() => has('docker-compose (2).yml') && !has('compose-copy.yml'))
 
     // undoing the copy deletes it, after asking
-    await page.keyboard.press('Control+z')
+    await page.keyboard.press('ControlOrMeta+z')
     await page.getByRole('button', { name: 'Delete Copies' }).click()
     await until(() => !has('docker-compose (2).yml'))
     expect(has('docker-compose.yml')).toBe(true)
@@ -392,16 +397,16 @@ describe('Clavium desktop app', () => {
     const clipboardWorks = (await readClipboardFiles().catch(() => [])).length === 1
     if (clipboardWorks) {
       await view().locator('.file-area').focus()
-      await page.keyboard.press('Control+v')
+      await page.keyboard.press('ControlOrMeta+v')
       await until(() => has('from-windows.txt'))
       expect(readFileSync(join(srv.root, 'from-windows.txt'), 'utf8')).toBe('made on the PC')
 
       await writeClipboardFiles([join(local, 'readme.txt')])
-      await page.keyboard.press('Control+v')
+      await page.keyboard.press('ControlOrMeta+v')
       await page.getByText('Replace “readme.txt”?').waitFor()
       await page.getByRole('button', { name: 'Cancel' }).click()
       expect(readFileSync(join(srv.root, 'readme.txt'), 'utf8')).toBe('Hello from the test server\n')
-      await page.keyboard.press('Control+v')
+      await page.keyboard.press('ControlOrMeta+v')
       await page.getByRole('button', { name: 'Replace', exact: true }).click()
       await until(() => readFileSync(join(srv.root, 'readme.txt'), 'utf8') === 'new readme from the PC')
       writeFileSync(join(srv.root, 'readme.txt'), 'Hello from the test server\n')
@@ -409,7 +414,7 @@ describe('Clavium desktop app', () => {
 
       // a file copied in the app lands on the Windows clipboard as a real file
       await row('docker-compose.yml').click()
-      await page.keyboard.press('Control+c')
+      await page.keyboard.press('ControlOrMeta+c')
       let onClipboard: string[] = []
       for (let i = 0; i < 40 && onClipboard.length === 0; i++) {
         await page.waitForTimeout(250)
@@ -441,10 +446,10 @@ describe('Clavium desktop app', () => {
     await view().getByRole('button', { name: 'Name' }).click()
 
     // Ctrl+F jumps to the filter; Escape clears it again
-    await page.keyboard.press('Control+f')
+    await page.keyboard.press('ControlOrMeta+f')
     await page.keyboard.type('READ')
     expect(await fileNames()).toEqual(['readme.txt'])
-    await page.keyboard.press('Control+f')
+    await page.keyboard.press('ControlOrMeta+f')
     await page.keyboard.type('zzz')
     await view().getByText('Nothing to Show').waitFor()
     await page.keyboard.press('Escape')
@@ -553,9 +558,9 @@ describe('Clavium desktop app', () => {
     await shot('09-activity')
   })
 
-  it('serves MCP over stdio through the installed bridge (bin/clavium-mcp.exe)', async () => {
+  it('serves MCP over stdio through the installed bridge (bin/clavium-mcp)', async () => {
     // The app copies the bridge into its data directory on start; that is the path shown to users.
-    const bridge = join(dataDir, 'bin', 'clavium-mcp.exe')
+    const bridge = join(dataDir, 'bin', process.platform === 'win32' ? 'clavium-mcp.exe' : 'clavium-mcp')
     expect(existsSync(bridge)).toBe(true)
     const child = spawn(bridge, [], {
       env: { ...process.env, CLAVIUM_DATA_DIR: dataDir, CLAVIUM_MCP_TOKEN: token },

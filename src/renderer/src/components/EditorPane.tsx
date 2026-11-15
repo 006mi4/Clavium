@@ -30,6 +30,7 @@ import {
 } from '../editor/commands'
 import { escapeHtml, highlight, LANGUAGE_LIST, languageName, lineCommentOf, withLineMarkers } from '../editor/highlight'
 import { IconButton, useMenu, useToast } from '../ui'
+import { isMac, keys, mod } from '../platform'
 
 /** Above this size the text is shown without colors to keep typing fluid. */
 export const HIGHLIGHT_LIMIT = 400_000
@@ -333,7 +334,7 @@ export const EditorPane = forwardRef<
   const onKeyDown = (e: KeyboardEvent): void => {
     const el = area.current as HTMLTextAreaElement
     const s = { text: el.value, start: el.selectionStart, end: el.selectionEnd }
-    const ctrl = e.ctrlKey || e.metaKey
+    const ctrl = mod(e)
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key
     const always = (edit: Edit | null): void => {
       e.preventDefault()
@@ -357,7 +358,8 @@ export const EditorPane = forwardRef<
       }
       if (key === '[' && !e.shiftKey) return always(outdent(s, unit))
       if (key === 'u') return always(changeCase(s, e.shiftKey))
-      if (key === '/' || key === '#' || (key === 'q' && !e.shiftKey)) {
+      // Cmd+Q quits the app on macOS, so only Windows has the second shortcut.
+      if (key === '/' || key === '#' || (key === 'q' && !e.shiftKey && !isMac)) {
         e.preventDefault()
         return comment()
       }
@@ -421,15 +423,18 @@ export const EditorPane = forwardRef<
 
   // search shortcuts work in the text and in the find bar
   const onShortcut = (e: ReactKeyboardEvent): void => {
-    const ctrl = (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey
+    const ctrl = mod(e) && !e.shiftKey && !e.altKey
     const key = e.key.toLowerCase()
+    // macOS hides the app on Cmd+H, so replacing is on Option+Cmd+F there, as in other Mac editors.
+    // Option changes the character that is typed, so the key itself (F = 70) is checked.
+    const replace = isMac ? e.metaKey && e.altKey && !e.shiftKey && e.keyCode === 70 : ctrl && key === 'h'
     const take = (fn: () => void): void => {
       e.preventDefault()
       e.stopPropagation()
       fn()
     }
-    if (ctrl && key === 'f') take(() => openPanel('find'))
-    else if (ctrl && key === 'h') take(() => openPanel('replace'))
+    if (replace) take(() => openPanel('replace'))
+    else if (ctrl && key === 'f') take(() => openPanel('find'))
     else if (ctrl && key === 'g') take(() => openPanel('goto'))
     else if (e.key === 'F3') take(() => (query ? findNext(e.shiftKey ? -1 : 1, true) : openPanel('find')))
     else if (e.key === 'Escape' && panel) take(closePanel)
@@ -578,7 +583,7 @@ export const EditorPane = forwardRef<
         </select>
         {html === null && <span>Colors and wrapping are off for large files</span>}
         <span style={{ flex: 1 }} />
-        <button className="link" style={{ color: 'inherit' }} onClick={() => openPanel('goto')} title="Go to Line (Ctrl+G)">
+        <button className="link" style={{ color: 'inherit' }} onClick={() => openPanel('goto')} title={`Go to Line (${keys('Ctrl+G')})`}>
           Line {cursor.line}, Column {cursor.col}
         </button>
         {cursor.selected > 0 && <span>{cursor.selected} selected</span>}

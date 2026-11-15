@@ -1,4 +1,4 @@
-// Renders the Clavium icon (key on a blue tile) to PNG and ICO without any
+// Renders the Clavium icon (key on a blue tile) to PNG and ICO, and the menu bar icon, without any
 // image library: signed-distance shapes, 4x4 supersampling, hand-written PNG/ICO encoder.
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { deflateSync } from 'node:zlib'
@@ -56,7 +56,15 @@ const sdSegment = (x, y, ax, ay, bx, by) => {
   return Math.hypot(pax - bax * h, pay - bay * h)
 }
 
-function sample(x, y) {
+const sdKey = (x, y, w) => {
+  const ring = Math.abs(Math.hypot(x - 22, y - 32) - 9) - w
+  const shaft = sdSegment(x, y, 31, 32, 51, 32) - w
+  const tooth1 = sdSegment(x, y, 45, 32, 45, 40) - w
+  const tooth2 = sdSegment(x, y, 51, 32, 51, 38) - w
+  return Math.min(ring, shaft, tooth1, tooth2)
+}
+
+function sampleIcon(x, y) {
   // returns [r,g,b,a] in 0..1
   const tile = sdRoundRect(x, y, 32, 32, 29, 29, 14)
   if (tile > 0) return [0, 0, 0, 0]
@@ -65,16 +73,18 @@ function sample(x, y) {
   let r = (0x3f + (0x0b - 0x3f) * t) / 255
   let g = (0x97 + (0x5f - 0x97) * t) / 255
   let b = (0xff + (0xd8 - 0xff) * t) / 255
-  const w = 2.75
-  const ring = Math.abs(Math.hypot(x - 22, y - 32) - 9) - w
-  const shaft = sdSegment(x, y, 31, 32, 51, 32) - w
-  const tooth1 = sdSegment(x, y, 45, 32, 45, 40) - w
-  const tooth2 = sdSegment(x, y, 51, 32, 51, 38) - w
-  if (Math.min(ring, shaft, tooth1, tooth2) <= 0) [r, g, b] = [1, 1, 1]
+  if (sdKey(x, y, 2.75) <= 0) [r, g, b] = [1, 1, 1]
   return [r, g, b, 1]
 }
 
-function render(size) {
+// The key alone in black, for the menu bar of macOS (a "template image": the system colours it).
+// It fills the picture: the 46 design units around the key are stretched over the whole canvas.
+function sampleTemplate(x, y) {
+  const scale = 46 / 64
+  return [0, 0, 0, sdKey(10 + x * scale, 10 + y * scale, 3.4) <= 0 ? 1 : 0]
+}
+
+function render(size, sample = sampleIcon) {
   const out = Buffer.alloc(size * size * 4)
   const ss = 4
   for (let py = 0; py < size; py++) {
@@ -123,8 +133,9 @@ function encodeIco(pngs) {
 
 mkdirSync('build', { recursive: true })
 mkdirSync('resources', { recursive: true })
-const big = render(512)
-writeFileSync('build/icon.png', big)
+writeFileSync('build/icon.png', render(1024))
 writeFileSync('resources/icon.png', render(256))
 writeFileSync('build/icon.ico', encodeIco([16, 24, 32, 48, 64, 128, 256].map((s) => [s, render(s)])))
-console.log('icons written: build/icon.png, build/icon.ico, resources/icon.png')
+writeFileSync('resources/trayTemplate.png', render(18, sampleTemplate))
+writeFileSync('resources/trayTemplate@2x.png', render(36, sampleTemplate))
+console.log('icons written: build/icon.png, build/icon.ico, resources/icon.png, resources/trayTemplate.png')

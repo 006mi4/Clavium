@@ -6,13 +6,14 @@ import { api, hostToInput, on, type UiSettings } from '../api'
 import { Group, Note, Row, Segmented, Select, Switch, Toolbar, useConfirm, useToast } from '../ui'
 import { AI_ACCESS_OPTIONS, AI_CONFIRM_OPTIONS } from './HostEditor'
 import { address } from './HostsPage'
+import { isMac } from '../platform'
 
 type Client = 'claudeCode' | 'claudeDesktop' | 'codex' | 'generic'
 
 const CLIENT_HELP: Record<Client, string> = {
   claudeCode: 'Run this command once in a terminal. Clavium is then available in all your Claude Code projects.',
   claudeDesktop: 'In Claude Desktop, open Settings › Developer › Edit Config, add this entry and restart Claude Desktop.',
-  codex: 'Add this to .codex\\config.toml in your user folder and restart Codex.',
+  codex: `Add this to ${isMac ? '~/.codex/config.toml' : '.codex\\config.toml in your user folder'} and restart Codex.`,
   generic: 'For any other MCP client that supports Streamable HTTP or stdio servers.'
 }
 

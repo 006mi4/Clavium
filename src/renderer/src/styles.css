@@ -152,6 +152,8 @@ h1, h2, h3, p { margin: 0; }
 .sidebar { background: var(--bg-sidebar); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
 .sidebar-head { height: var(--toolbar-h); display: flex; align-items: center; gap: 9px; padding: 0 10px 0 16px; flex-shrink: 0; }
 .sidebar-head .wordmark { font: 600 14px var(--font-display); letter-spacing: 0.1px; flex: 1; }
+/* macOS: the close, minimise and zoom buttons sit in the top left corner of the window. */
+.mac .sidebar-head { padding-left: 84px; }
 .sidebar-scroll { flex: 1; overflow-y: auto; padding: 4px 10px 10px; min-height: 0; }
 .sidebar-foot { padding: 8px 10px 10px; border-top: 1px solid var(--line); }
 .side-title { font-size: 11px; font-weight: 600; color: var(--text-3); padding: 14px 8px 5px; }
@@ -191,6 +193,8 @@ h1, h2, h3, p { margin: 0; }
   backdrop-filter: blur(24px) saturate(1.5);
   border-bottom: 1px solid var(--line);
 }
+/* The 148px on the right keep clear of the caption buttons of Windows. macOS has none there. */
+.mac .toolbar { padding-right: 20px; }
 .toolbar .titles { display: flex; align-items: baseline; gap: 10px; min-width: 0; margin-right: auto; }
 .toolbar .title { font: 600 15px var(--font-display); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .toolbar .subtitle { color: var(--text-2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 6px; }

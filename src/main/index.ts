@@ -1,5 +1,5 @@
-﻿import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+﻿import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import {
   app,
   BrowserWindow,
@@ -10,6 +10,7 @@ import {
   powerMonitor,
   session,
   Tray,
+  type MenuItemConstructorOptions,
   type WebContents
 } from 'electron'
 import type { EventChannel } from '@shared/ipc'
@@ -25,31 +26,52 @@ import { McpController } from './mcpController'
 import { UiPrompter } from './prompts'
 import { TerminalManager } from './terminals'
 import { Updater } from './updater'
-import { readClipboardFiles, writeClipboardFiles } from './winclipboard'
+import { readClipboardFiles, writeClipboardFiles } from './fileclipboard'
 
 /** Real location of the executable (the portable build unpacks itself to a temp dir). */
 function exePath(): string {
   return process.env.PORTABLE_EXECUTABLE_FILE || process.execPath
 }
 
+const isMac = process.platform === 'darwin'
+const BRIDGE_NAME = process.platform === 'win32' ? 'clavium-mcp.exe' : 'clavium-mcp'
+
+/** What the bridge starts when Clavium is not running: the exe on Windows, the app bundle on macOS. */
+function launchTarget(): string {
+  // <bundle>.app/Contents/MacOS/Clavium
+  return isMac ? resolve(process.execPath, '..', '..', '..') : exePath()
+}
+
 /**
- * Copy the stdio bridge (clavium-mcp.exe) to %APPDATA%\Clavium\bin so AI client configs
- * keep a stable path across updates and for the portable build. Returns its path.
+ * Copy the stdio bridge (clavium-mcp) to the bin folder of the data directory (%APPDATA%\Clavium
+ * on Windows, ~/Library/Application Support/Clavium on macOS) so AI client configs keep a stable
+ * path across updates and for the portable build. Returns its path.
  */
 function installBridge(dataDir: string): string {
   const source = app.isPackaged
-    ? join(process.resourcesPath, 'bin', 'clavium-mcp.exe')
-    : join(app.getAppPath(), 'resources', 'bin', 'clavium-mcp.exe')
+    ? join(process.resourcesPath, 'bin', BRIDGE_NAME)
+    : join(app.getAppPath(), 'resources', 'bin', BRIDGE_NAME)
   const binDir = join(dataDir, 'bin')
-  const target = join(binDir, 'clavium-mcp.exe')
+  const target = join(binDir, BRIDGE_NAME)
   try {
     mkdirSync(binDir, { recursive: true })
     if (existsSync(source)) {
       const same = existsSync(target) && readFileSync(source).equals(readFileSync(target))
-      if (!same) copyFileSync(source, target)
+      if (!same) {
+        if (isMac) {
+          // macOS remembers the signature of a program file. Writing new code into the same file
+          // gets the program killed at its next start, so the new copy replaces the file as a whole.
+          const fresh = `${target}.new`
+          copyFileSync(source, fresh)
+          chmodSync(fresh, 0o755)
+          renameSync(fresh, target)
+        } else {
+          copyFileSync(source, target)
+        }
+      }
     }
     // Lets the bridge start Clavium when an AI client needs it and the app is not running.
-    if (app.isPackaged) writeFileSync(join(binDir, 'clavium-app-path.txt'), exePath(), 'utf8')
+    if (app.isPackaged) writeFileSync(join(binDir, 'clavium-app-path.txt'), launchTarget(), 'utf8')
   } catch {
     // The bridge may be in use by a running AI client; the existing copy keeps working.
   }
@@ -77,7 +99,9 @@ function runApp(): void {
   let quitting = false
 
   const getWindow = (): BrowserWindow | null => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null)
-  const iconPath = app.isPackaged ? join(process.resourcesPath, 'icon.png') : join(app.getAppPath(), 'resources', 'icon.png')
+  const resource = (name: string): string =>
+    app.isPackaged ? join(process.resourcesPath, name) : join(app.getAppPath(), 'resources', name)
+  const iconPath = resource('icon.png')
 
   // Windows shows notifications under the name and icon of the app this ID belongs to. The
   // installer registers the ID below with the Start menu shortcut. Without an installed shortcut
@@ -93,7 +117,7 @@ function runApp(): void {
 
   const terminals = new TerminalManager(vault, prompter, send)
   // Private folder for files that are only passing through (copies between servers, files put on
-  // the Windows clipboard). Emptied at every start and when the app quits.
+  // the system clipboard). Emptied at every start and when the app quits.
   const transferDir = join(dataDir, 'transfer-tmp')
   const emptyTransferDir = (): void => {
     try {
@@ -186,9 +210,12 @@ function runApp(): void {
       backgroundColor: c.bg,
       icon: existsSync(iconPath) ? iconPath : undefined,
       autoHideMenuBar: true,
-      // The app draws its own unified toolbar; Windows keeps its native caption buttons on top of it.
+      // The app draws its own unified toolbar. Windows keeps its native caption buttons on top of
+      // it (right), macOS its close, minimise and zoom buttons (left, centred in the toolbar).
       titleBarStyle: 'hidden',
-      titleBarOverlay: { color: c.bg, symbolColor: c.symbols, height: TITLEBAR_HEIGHT },
+      ...(isMac
+        ? { trafficLightPosition: { x: 16, y: Math.round((TITLEBAR_HEIGHT - 14) / 2) } }
+        : { titleBarOverlay: { color: c.bg, symbolColor: c.symbols, height: TITLEBAR_HEIGHT } }),
       webPreferences: {
         preload: join(__dirname, '../preload/index.js'),
         contextIsolation: true,
@@ -245,9 +272,49 @@ function runApp(): void {
   }
 
   app.on('second-instance', showWindow)
+  // macOS: a click on the Dock icon brings the window back after it was closed or hidden.
+  app.on('activate', showWindow)
+
+  /**
+   * macOS always shows a menu bar, and its entries are what make Cmd+C, Cmd+V, Cmd+Q and the
+   * like work at all. Only standard entries: everything else lives in the window.
+   */
+  function macMenu(): Menu {
+    const template: MenuItemConstructorOptions[] = [
+      {
+        label: app.name,
+        submenu: [
+          { role: 'about' },
+          { type: 'separator' },
+          { role: 'hide' },
+          { role: 'hideOthers' },
+          { role: 'unhide' },
+          { type: 'separator' },
+          { role: 'quit' }
+        ]
+      },
+      {
+        label: 'Edit',
+        submenu: [
+          { role: 'undo' },
+          { role: 'redo' },
+          { type: 'separator' },
+          { role: 'cut' },
+          { role: 'copy' },
+          { role: 'paste' },
+          { role: 'selectAll' }
+        ]
+      },
+      {
+        label: 'Window',
+        submenu: [{ role: 'minimize' }, { role: 'zoom' }, { role: 'togglefullscreen' }, { type: 'separator' }, { role: 'front' }]
+      }
+    ]
+    return Menu.buildFromTemplate(template)
+  }
 
   app.whenReady().then(async () => {
-    Menu.setApplicationMenu(null)
+    Menu.setApplicationMenu(isMac ? macMenu() : null)
     session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false))
     session.defaultSession.setPermissionCheckHandler(() => false)
 
@@ -255,9 +322,12 @@ function runApp(): void {
     registerIpc({ window: getWindow, vault, settings, audit, prompter, mcp, terminals, files, docker, forwards, updater, editor, dragIcon: () => dragIcon })
     createWindow()
 
-    if (existsSync(iconPath)) {
-      tray = new Tray(nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 }))
-      tray.on('click', showWindow)
+    // macOS: a black-and-transparent "template" image that the menu bar colours itself.
+    const trayIcon = isMac ? resource('trayTemplate.png') : iconPath
+    if (existsSync(trayIcon)) {
+      tray = new Tray(isMac ? nativeImage.createFromPath(trayIcon) : nativeImage.createFromPath(trayIcon).resize({ width: 16, height: 16 }))
+      // On macOS a click opens the menu, like every other menu bar icon.
+      if (!isMac) tray.on('click', showWindow)
       updateTrayMenu()
     }
 

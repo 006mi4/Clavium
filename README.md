@@ -5,12 +5,12 @@
 <h1 align="center">Clavium</h1>
 
 <p align="center">
-  Open-source SSH, SFTP and FTP(S) client for Windows — with an encrypted vault and a built-in,
+  Open-source SSH, SFTP and FTP(S) client for Windows and macOS, with an encrypted vault and a built-in,
   permission-gated <b>MCP server</b> so Claude and Codex can work on your servers, only where and how you allow it.
 </p>
 
 <p align="center">
-  <a href="https://github.com/006mi4/Clavium/releases/latest"><b>Download for Windows</b></a> ·
+  <a href="https://github.com/006mi4/Clavium/releases/latest"><b>Download for Windows and macOS</b></a> ·
   <a href="#ai-access-mcp">AI access setup</a> ·
   <a href="SECURITY.md">Security</a> ·
   <a href="#deutsch">Deutsch</a>
@@ -23,7 +23,7 @@
 ## Features
 
 - **SSH terminal** with tabs (xterm.js, 256 colours, copy/paste, resize), password, key, SSH agent
-  (Windows OpenSSH agent / Pageant) and keyboard-interactive / 2FA logins
+  (Windows OpenSSH agent / Pageant, the SSH agent of macOS) and keyboard-interactive / 2FA logins
 - **Screens made simple** (GNU screen): the terminal shows which screens are running under your user. One
   click opens a screen in its own tab, with what it printed so far in the scrollback, so the mouse wheel just
   works. The keyboard goes straight to the program inside, e.g. the console of a game server. Closing the tab
@@ -34,12 +34,13 @@
   it as a tab, set whether a container starts again by itself, and see and delete images. Download images
   with a progress display, and create containers with a form for ports, folders and settings instead of a
   long command line.
-- **File manager for SFTP and FTP(S)** that works the way Explorer does:
-  - drag files and whole folders from Windows into the window to upload them, onto a folder to upload into it
-  - drag files and folders out of the window onto the desktop or into an Explorer window to download them
+- **File manager for SFTP and FTP(S)** that works the way Explorer and Finder do
+  (on macOS every `Ctrl` shortcut below is `Cmd`):
+  - drag files and whole folders from Explorer or Finder into the window to upload them, onto a folder to upload into it
+  - drag files and folders out of the window onto the desktop or into an Explorer or Finder window to download them
   - drag items onto a folder, a part of the path or the "move to enclosing folder" bar to move them
   - cut, copy and paste with Ctrl+X / Ctrl+C / Ctrl+V or the right-click menu: inside a server, from one
-    server to another, from Windows to the server and (up to 200 MB) from the server to Windows
+    server to another, from your computer to the server and (up to 200 MB) from the server to your computer
   - Ctrl+Z takes back moves, renames and copies, for as long as the app is running
   - nothing is replaced without asking: moves and copies never overwrite, uploads ask first
   - running transfers can be cancelled, one by one or all at once; half-transferred files are removed
@@ -62,11 +63,12 @@
 - **Encrypted vault** (scrypt + AES-256-GCM) for all hosts, passwords and keys, auto-lock, lock on Windows lock
 - **MCP server for AI clients** (Claude Code, Claude Desktop, Codex, any MCP client) with per-host access
   levels, approval dialogs and an activity log
-- Native-feeling interface that follows the Windows light / dark setting; tray mode, installer and portable `.exe`
+- Native-feeling interface that follows the light / dark setting of the system; tray mode (menu bar on macOS),
+  installer and portable `.exe` for Windows, disk image for macOS
 
 ## Screenshots
 
-Clavium follows the Windows light / dark setting.
+Clavium follows the light / dark setting of Windows and macOS.
 
 | Hosts | Hosts (dark) |
 |---|---|
@@ -124,7 +126,8 @@ Get the latest version from **[Releases](https://github.com/006mi4/Clavium/relea
 |---|---|
 | `Clavium-Setup-x.y.z.exe` | Installer (per user, no admin rights needed), start menu + desktop shortcut |
 | `Clavium-x.y.z-portable.exe` | Single exe, no installation |
-| `SHA256SUMS.txt` | Checksums of both files |
+| `Clavium-x.y.z-mac.dmg` | macOS 11 or later, Apple silicon and Intel in one file |
+| `SHA256SUMS.txt`, `SHA256SUMS-mac.txt` | Checksums of the files above |
 
 **Windows SmartScreen:** Clavium is open source and its releases are not signed with a paid
 code-signing certificate, so Windows may show *"Windows protected your PC"* on the first start.
@@ -138,6 +141,16 @@ Get-FileHash .\Clavium-Setup-0.1.0.exe -Algorithm SHA256
 gh attestation verify .\Clavium-Setup-0.1.0.exe --repo 006mi4/Clavium
 ```
 
+**macOS:** open the `.dmg` and drag Clavium into *Applications*. If the release was built without an
+Apple Developer ID, macOS refuses the first start with *"Clavium can't be opened"*. Open
+**System Settings › Privacy & Security**, scroll to the message about Clavium and click **Open Anyway**.
+You can verify the download the same way:
+
+```bash
+shasum -a 256 Clavium-0.1.4-mac.dmg          # compare with SHA256SUMS-mac.txt
+gh attestation verify Clavium-0.1.4-mac.dmg --repo 006mi4/Clavium
+```
+
 ### Updates
 
 The installed version updates itself in place: **Settings → Updates → Check Now → Download Update →
@@ -146,7 +159,7 @@ and twice a day (can be switched off), but it never downloads or installs anythi
 
 An update is installed only if it is signed with the Clavium release key (Ed25519) that is built into the
 app, is strictly newer than the installed version, and matches the signed size and SHA-512 checksum.
-The portable version can't update itself; download the new file instead. Details in
+The portable version and the macOS version can't update themselves; download the new file instead. Details in
 [SECURITY.md](SECURITY.md#updates).
 
 Every release is built from the tagged source by [`.github/workflows/release.yml`](.github/workflows/release.yml)
@@ -202,9 +215,12 @@ env = { CLAVIUM_MCP_TOKEN = "clv_…" }
 tool_timeout_sec = 180
 ```
 
-`clavium-mcp.exe` is a tiny stdio ↔ HTTP bridge (C#, source in [`bridge/`](bridge/ClaviumMcpBridge.cs))
+On macOS the command is `/Users/you/Library/Application Support/Clavium/bin/clavium-mcp` and the Codex
+file is `~/.codex/config.toml`. The *AI Access* page always shows the exact text to copy.
+
+`clavium-mcp` is a tiny stdio ↔ HTTP bridge (C# on Windows, Swift on macOS, sources in [`bridge/`](bridge/))
 for clients that only speak stdio. It starts Clavium if it is not running. Clavium must be **unlocked** for
-tools to work; keep it in the tray.
+tools to work; keep it in the tray (the menu bar on macOS).
 
 ### Tools
 
@@ -259,8 +275,9 @@ Short version — details and threat model in [SECURITY.md](SECURITY.md):
 
 ## Build from source
 
-Requirements: Windows 10/11, Node.js 24, Git. (The MCP bridge is compiled with the C# compiler that ships with
-Windows — no extra SDK.)
+Requirements: Node.js 24, Git and either Windows 10/11 or macOS 11 or later with the Xcode command line
+tools (`xcode-select --install`). The MCP bridge is compiled with the C# compiler that ships with Windows,
+or with the Swift compiler of the command line tools; no extra SDK is needed.
 
 ```bash
 git clone https://github.com/006mi4/Clavium.git
@@ -275,7 +292,9 @@ npm test           # unit + integration tests (local SSH/SFTP test server, MCP, 
 # optional, the AI tools for screens and Docker against the same kind of server:
 #   CLAVIUM_TOOLS_TEST=user@host:22 CLAVIUM_TOOLS_KEY=~/.ssh/id_ed25519 CLAVIUM_TOOLS_IMAGE=alpine npx vitest run -c vitest.e2e.config.mts tests/e2e/server-tools.e2e.ts
 npm run test:e2e   # drives the real Electron app with Playwright
-npm run dist       # build dist/Clavium-Setup-x.y.z.exe and dist/Clavium-x.y.z-portable.exe
+npm run dist       # Windows: dist/Clavium-Setup-x.y.z.exe and dist/Clavium-x.y.z-portable.exe
+                   # macOS:   dist/Clavium-x.y.z-mac.dmg, signed with your Developer ID certificate
+npm run dist:mac:adhoc   # macOS without a certificate (ad-hoc signature, Gatekeeper warns on first start)
 ```
 
 Project layout:
@@ -285,7 +304,7 @@ src/main/core/      vault, SSH, SFTP/FTP, host keys, MCP server (Electron-free, 
 src/main/           Electron glue: window, IPC, terminals, transfers, tray, auto-lock
 src/preload/        minimal allow-listed bridge to the renderer
 src/renderer/       React UI
-bridge/             clavium-mcp.exe (stdio bridge, C#)
+bridge/             clavium-mcp (stdio bridge; C# for Windows, Swift for macOS)
 tests/              vitest tests incl. an in-process SSH/SFTP server; tests/e2e drives the app
 ```
 
@@ -304,7 +323,7 @@ Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Deutsch
 
-**Clavium** ist ein kostenloser Open-Source-Client für Windows, um sich per **SSH, SFTP und FTP(S)** mit
+**Clavium** ist ein kostenloser Open-Source-Client für Windows und macOS, um sich per **SSH, SFTP und FTP(S)** mit
 Servern zu verbinden — ähnlich wie Termius. Alle Zugangsdaten liegen in einem mit Master-Passwort
 verschlüsselten Tresor auf deinem Rechner (keine Cloud, keine Telemetrie).
 
@@ -316,6 +335,11 @@ Server nutzen können — aber nur Hosts, die du freigibst, nur mit den Rechten,
 (Installer) oder `Clavium-x.y.z-portable.exe` herunterladen. Da die Datei nicht kostenpflichtig signiert ist,
 zeigt Windows evtl. „Der Computer wurde durch Windows geschützt" → **Weitere Informationen → Trotzdem
 ausführen**. Die Echtheit lässt sich mit `SHA256SUMS.txt` bzw. `gh attestation verify` prüfen (siehe oben).
+
+**macOS:** `Clavium-x.y.z-mac.dmg` herunterladen, öffnen und Clavium in den Ordner *Programme* ziehen. Die Datei
+läuft auf Macs mit Apple-Chip und mit Intel-Prozessor. Falls macOS den ersten Start verweigert:
+**Systemeinstellungen › Datenschutz & Sicherheit › Dennoch öffnen**. Tastenkürzel nutzen auf dem Mac `Cmd`
+statt `Strg`.
 
 **KI einrichten:** Clavium → *AI Access* → *MCP Server* einschalten → bei einem Host *Allow AI to* auf
 *Read Files* oder *Full Access* stellen → unter *Set Up a Client* das Snippet für Claude Code, Claude Desktop oder Codex kopieren.
