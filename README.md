@@ -60,7 +60,14 @@
   - modification times are kept, and new files on the server keep their permissions
   - one file that fails does not stop a folder: the rest goes on and the failures are listed for a retry
   - sort by name, size or date, filter the folder (Ctrl+F), show or hide hidden files, follow links
-  - change permissions (chmod) with checkboxes or the numeric form
+  - a folder tree next to the list, bookmarks for folders, and every host opens in the folder you left it in
+  - search by name or pattern (`*.log`) in a folder and everything below it (Ctrl+Shift+F)
+  - full keyboard use: arrow keys, Home, End, Page Up and Down, Shift to select a range, and typing a name
+    jumps to it; folders with many thousands of entries stay fast
+  - properties of files and folders: size of a folder with everything inside, owner and group, permissions
+    with checkboxes or the numeric form, for folders also with everything inside; over SFTP the owner and
+    the group can be changed too
+  - FTP servers that do not use UTF-8 for file names can be set to Western European (ISO 8859-1) per host
 - **Vault backup**: save the encrypted vault as one file and restore it on this or another PC
 - **Built-in text editor**: double-click a remote file to edit it and save it back to the server
   - several files in tabs, split view (two files or one file twice side by side), new files

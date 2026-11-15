@@ -14,6 +14,7 @@ export interface TestSshServer {
   hostKey: string
   /** permission changes the server was asked to make */
   setstat: { path: string; mode: number | undefined }[]
+  chown: { path: string; uid: number; gid: number }[]
   close(): Promise<void>
 }
 
@@ -23,8 +24,8 @@ export const TEST_PASSWORD = 'correct horse battery'
 function toAttrs(st: fs.Stats) {
   return {
     mode: st.mode,
-    uid: 0,
-    gid: 0,
+    uid: st.uid,
+    gid: st.gid,
     size: st.size,
     atime: Math.floor(st.atimeMs / 1000),
     mtime: Math.floor(st.mtimeMs / 1000)
@@ -35,6 +36,7 @@ export async function startTestSshServer(hostKey?: string): Promise<TestSshServe
   const root = mkdtempSync(join(tmpdir(), 'clavium-sftp-'))
   const key = hostKey ?? utils.generateKeyPairSync('ed25519').private
   const setstat: TestSshServer['setstat'] = []
+  const chown: TestSshServer['chown'] = []
   const real = (vpath: string): string => {
     const norm = posix.normalize(posix.isAbsolute(vpath) ? vpath : posix.join('/', vpath))
     if (norm.includes('..')) throw new Error('escape')
@@ -184,6 +186,8 @@ export async function startTestSshServer(hostKey?: string): Promise<TestSshServe
                 setstat.push({ path, mode: attrs.mode })
                 fs.chmodSync(real(path), attrs.mode & 0o777)
               }
+              // Changing the owner needs root, so it is only written down.
+              if (attrs.uid !== undefined) chown.push({ path, uid: attrs.uid, gid: attrs.gid })
               if (attrs.mtime !== undefined) fs.utimesSync(real(path), attrs.atime ?? attrs.mtime, attrs.mtime)
               sftp.status(reqid, STATUS_CODE.OK)
             } catch (e) {
@@ -204,6 +208,7 @@ export async function startTestSshServer(hostKey?: string): Promise<TestSshServe
     root,
     hostKey: key,
     setstat,
+    chown,
     close: () =>
       new Promise<void>((resolve) => {
         server.close(() => resolve())

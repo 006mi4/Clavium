@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent } from 'react'
 import {
   ArrowDown,
   ArrowUp,
@@ -14,10 +14,13 @@ import {
   FilePlus2,
   Folder,
   FolderPlus,
+  FolderSearch,
+  FolderTree as FolderTreeIcon,
+  Info,
+  Star,
   FolderUp,
   Link2,
   Pencil,
-  KeyRound,
   RotateCw,
   Scissors,
   Search,
@@ -29,6 +32,7 @@ import {
 import type { HostSummary, MovePair, RemoteEntry } from '@shared/types'
 import { api, on } from '../api'
 import { TransferPanel } from './Transfers'
+import { FolderTree, PropertiesSheet, SearchSheet, countOf, joinPath as join, parentOf } from './FileTools'
 import { Empty, IconButton, Sheet, Toolbar, formatBytes, formatDate, useConfirm, useMenu, useToast, type MenuItem } from '../ui'
 import { StatusDot, type ConnState } from './TerminalView'
 import { registerEditorSession } from '../editor/registry'
@@ -36,29 +40,14 @@ import { getRemoteClip, lastUndo, popUndo, pushUndo, setRemoteClip, subscribeFil
 import { EditorWorkspace, type WorkspaceApi } from './EditorWorkspace'
 import { FILE_MANAGER, OS_NAME, isMac, keys, mod } from '../platform'
 
-function parentOf(p: string): string {
-  if (p === '/' || !p.includes('/')) return '/'
-  const up = p.replace(/\/+$/, '').split('/').slice(0, -1).join('/')
-  return up || '/'
-}
-function join(dir: string, name: string): string {
-  return dir.endsWith('/') ? dir + name : `${dir}/${name}`
-}
 /** True when `child` is `parent` or lies below it. */
 function isInside(parent: string, child: string): boolean {
   return child === parent || child.startsWith(parent.replace(/\/+$/, '') + '/')
 }
-function countOf(n: number): string {
-  return n === 1 ? '1 item' : `${n} items`
-}
 type SortKey = 'name' | 'size' | 'modifiedAt'
-const BITS = ['r', 'w', 'x', 'r', 'w', 'x', 'r', 'w', 'x']
-/** "rwxr-xr-x" → 0o755 */
-function modeOf(permissions: string | undefined): number {
-  let mode = 0
-  for (let i = 0; i < 9; i++) if (permissions && permissions[i] && permissions[i] !== '-') mode |= 1 << (8 - i)
-  return mode
-}
+/** Folders with more entries than this draw only the rows that are in view. */
+const VIRTUAL_FROM = 300
+const OVERSCAN = 20
 function readPref(key: string, fallback: string): string {
   try {
     return localStorage.getItem(key) ?? fallback
@@ -108,7 +97,22 @@ export function FilesView(props: {
   const [filter, setFilter] = useState('')
   const [showHidden, setShowHidden] = useState(() => readPref('files.showHidden', '1') === '1')
   const filterRef = useRef<HTMLInputElement>(null)
-  const [permsFor, setPermsFor] = useState<RemoteEntry[] | null>(null)
+  const [propsFor, setPropsFor] = useState<RemoteEntry[] | null>(null)
+  const [searching, setSearching] = useState(false)
+  const [showTree, setShowTree] = useState(() => readPref('files.tree', '1') === '1')
+  const [bookmarks, setBookmarks] = useState<string[]>(props.host.bookmarks ?? [])
+  /** the last listing, for the folder tree */
+  const [listing, setListing] = useState<{ path: string; entries: RemoteEntry[] }>({ path: '', entries: [] })
+  /** the row the keyboard is on */
+  const [cursorPath, setCursorPath] = useState<string | null>(null)
+  const [scrollTop, setScrollTop] = useState(0)
+  const [rowHeight, setRowHeight] = useState(31)
+  const [, setResized] = useState(0)
+  const rowId = useId()
+  /** select this item once its folder has loaded (coming from the search) */
+  const revealAfterLoad = useRef<string | null>(null)
+  const remember = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const typed = useRef({ text: '', at: 0 })
   /** what the list shows: filtered and sorted, folders first */
   const entries = useMemo(() => {
     const q = filter.trim().toLowerCase()
@@ -205,11 +209,31 @@ export function FilesView(props: {
     try {
       const list = await api.files.list(id, path)
       setEntries(list)
-      if (path !== cwdRef.current) setFilter('')
+      setListing({ path, entries: list })
+      const moved = path !== cwdRef.current
+      if (moved) setFilter('')
       setCwd(path)
       cwdRef.current = path
-      setSelected(new Set())
+      const reveal = revealAfterLoad.current
+      revealAfterLoad.current = null
+      if (reveal && list.some((e) => e.path === reveal)) {
+        setSelected(new Set([reveal]))
+        setCursorPath(reveal)
+      } else if (moved) {
+        // A reload keeps what is selected, as far as it is still there.
+        setSelected(new Set())
+        setCursorPath(null)
+        if (areaRef.current) areaRef.current.scrollTop = 0
+      } else {
+        const there = new Set(list.map((e) => e.path))
+        setSelected((sel) => new Set([...sel].filter((p) => there.has(p))))
+      }
       lastClicked.current = -1
+      if (moved) {
+        // The folder is remembered for the next visit, once the user has settled on it.
+        if (remember.current) clearTimeout(remember.current)
+        remember.current = setTimeout(() => void api.hosts.rememberPath(props.host.id, path).catch(() => undefined), 1500)
+      }
     } catch (e) {
       toast.error(e)
     } finally {
@@ -228,7 +252,10 @@ export function FilesView(props: {
         sidRef.current = id
         setSid(id)
         report('connected')
-        await load(await api.files.home(id), id)
+        // Back to where the user was last time, if that folder is still there.
+        const last = cwdRef.current || props.host.lastPath
+        const start = last && (await api.files.list(id, last).then(() => last, () => null))
+        await load(start || (await api.files.home(id)), id)
       })
       .catch((e: Error) => !cancelled && report('error', e.message))
     return () => {
@@ -269,6 +296,106 @@ export function FilesView(props: {
       return next
     })
     lastClicked.current = index
+    setCursorPath(entry.path)
+  }
+
+  // ---- keyboard: arrows, paging, typing a name ----
+  /** Scroll so that row `index` is in view. The header stays on top of the rows. */
+  const showRow = (index: number): void => {
+    const area = areaRef.current
+    if (!area) return
+    const header = area.querySelector('thead')?.getBoundingClientRect().height ?? 0
+    const top = index * rowHeight
+    if (top < area.scrollTop) area.scrollTop = top
+    else if (header + top + rowHeight > area.scrollTop + area.clientHeight) area.scrollTop = header + top + rowHeight - area.clientHeight
+  }
+  const moveCursor = (to: number, extend: boolean): void => {
+    if (entries.length === 0) return
+    const index = Math.max(0, Math.min(entries.length - 1, to))
+    if (extend && lastClicked.current >= 0) {
+      const [a, b] = [lastClicked.current, index].sort((x, y) => x - y)
+      setSelected(new Set(entries.slice(a, b + 1).map((x) => x.path)))
+    } else {
+      setSelected(new Set([entries[index].path]))
+      lastClicked.current = index
+    }
+    setCursorPath(entries[index].path)
+    showRow(index)
+  }
+  const listKey = (e: ReactKeyboardEvent): void => {
+    if (e.target !== e.currentTarget) return
+    const at = cursorPath ? entries.findIndex((x) => x.path === cursorPath) : -1
+    const page = Math.max(1, Math.floor((areaRef.current?.clientHeight ?? 400) / rowHeight) - 2)
+    const up = (): void => void (cwd !== '/' && load(parentOf(cwd)))
+    let handled = true
+    if (e.key === 'ArrowDown') {
+      // Finder opens with Cmd+Down and goes up with Cmd+Up; Explorer goes up with Alt+Up.
+      if (isMac && e.metaKey) selEntries.length === 1 && openEntry(selEntries[0])
+      else moveCursor(at + 1, e.shiftKey)
+    } else if (e.key === 'ArrowUp') {
+      if (isMac ? e.metaKey : e.altKey) up()
+      else moveCursor(at < 0 ? entries.length - 1 : at - 1, e.shiftKey)
+    } else if (e.key === 'Home') moveCursor(0, e.shiftKey)
+    else if (e.key === 'End') moveCursor(entries.length - 1, e.shiftKey)
+    else if (e.key === 'PageDown') moveCursor(Math.max(at, 0) + page, e.shiftKey)
+    else if (e.key === 'PageUp') moveCursor(Math.max(at, 0) - page, e.shiftKey)
+    else if (e.key === 'Delete' || (isMac && e.metaKey && e.key === 'Backspace')) void remove(selEntries)
+    else if (e.key === 'Backspace') up()
+    else if (e.key === 'Enter' && (isMac ? false : e.altKey) && selEntries.length) setPropsFor(selEntries)
+    else if (isMac && e.metaKey && e.key.toLowerCase() === 'i' && selEntries.length) setPropsFor(selEntries)
+    else if (e.key === 'Enter' && selEntries.length === 1) openEntry(selEntries[0])
+    else if (e.key === 'F2' && selEntries.length === 1) rename(selEntries[0])
+    else if (mod(e) && e.key.toLowerCase() === 'a') setSelected(new Set(entries.map((x) => x.path)))
+    else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && (e.key !== ' ' || typed.current.text)) {
+      // Typing jumps to the first name that starts with what was typed.
+      const now = Date.now()
+      const text = (now - typed.current.at > 800 ? '' : typed.current.text) + e.key.toLowerCase()
+      typed.current = { text, at: now }
+      // A single letter typed again goes on to the next name with that letter.
+      const from = text.length === 1 ? at + 1 : Math.max(at, 0)
+      const order = [...entries.keys()].map((i) => (i + from) % entries.length)
+      const hit = order.find((i) => entries[i].name.toLowerCase().startsWith(text))
+      if (hit !== undefined) moveCursor(hit, false)
+    } else handled = false
+    if (handled) e.preventDefault()
+  }
+  useEffect(() => {
+    // after a jump from the search, bring the item into view
+    const i = cursorPath ? entries.findIndex((x) => x.path === cursorPath) : -1
+    if (i >= 0) showRow(i)
+  }, [entries, cursorPath])
+  useEffect(() => {
+    const onResize = (): void => setResized((n) => n + 1)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  // ---- bookmarks, search ----
+  const saveBookmarks = (next: string[]): void => {
+    setBookmarks(next)
+    void api.hosts.setBookmarks(props.host.id, next).catch(toast.error)
+  }
+  const bookmarkMenu = (e: MouseEvent<HTMLElement>): void => {
+    const marked = bookmarks.includes(cwd)
+    const list: MenuItem[] = [
+      marked
+        ? { label: 'Remove Bookmark for This Folder', onSelect: () => saveBookmarks(bookmarks.filter((b) => b !== cwd)) }
+        : { label: 'Add Bookmark for This Folder', icon: Star, onSelect: () => saveBookmarks([...bookmarks, cwd]) }
+    ]
+    if (bookmarks.length) list.push('separator')
+    for (const b of bookmarks) list.push({ label: b, icon: Folder, onSelect: () => void load(b) })
+    menu.openBelow(e, list)
+  }
+  const revealHit = (entry: RemoteEntry): void => {
+    setSearching(false)
+    revealAfterLoad.current = entry.path
+    setFilter('')
+    if (entry.name.startsWith('.') && !showHidden) toggleHidden()
+    void load(parentOf(entry.path)).then(() => areaRef.current?.focus())
+  }
+  const toggleTree = (): void => {
+    writePref('files.tree', showTree ? '0' : '1')
+    setShowTree(!showTree)
   }
 
   const run = async (fn: () => Promise<unknown>, reload = true): Promise<void> => {
@@ -446,6 +573,7 @@ export function FilesView(props: {
     if (!selected.has(entry.path)) {
       setSelected(new Set([entry.path]))
       lastClicked.current = index
+      setCursorPath(entry.path)
       items = [entry]
     }
     const list: MenuItem[] = []
@@ -463,7 +591,7 @@ export function FilesView(props: {
       list.push({ label: 'Paste', icon: ClipboardPaste, hint: keys('Ctrl+V'), onSelect: () => void paste(cwd) })
     }
     if (items.length === 1) list.push({ label: 'Rename…', icon: Pencil, hint: 'F2', onSelect: () => rename(entry) })
-    list.push({ label: 'Permissions…', icon: KeyRound, onSelect: () => setPermsFor(items) })
+    list.push({ label: 'Properties…', icon: Info, hint: keys('Alt+Enter', '⌘I'), onSelect: () => setPropsFor(items) })
     list.push('separator', { label: 'Delete…', icon: Trash2, hint: keys('Del', '⌘⌫'), destructive: true, onSelect: () => void remove(items) })
     menu.openAt(e, list)
   }
@@ -473,16 +601,6 @@ export function FilesView(props: {
   }
   const sortBy = (key: SortKey): void => setSort((cur) => ({ key, desc: cur.key === key ? !cur.desc : key !== 'name' }))
   const sortMark = (key: SortKey) => (sort.key === key ? sort.desc ? <ArrowDown size={11} /> : <ArrowUp size={11} /> : null)
-  const applyPermissions = async (items: RemoteEntry[], mode: number): Promise<void> => {
-    if (!sid) return
-    try {
-      for (const e of items) await api.files.chmod(sid, e.path, mode)
-      toast.ok(`Permissions of ${items.length === 1 ? `“${items[0].name}”` : countOf(items.length)} changed.`)
-    } catch (e) {
-      toast.error(e)
-    }
-    await load(cwdRef.current)
-  }
   const areaMenu = (e: MouseEvent): void => {
     menu.openAt(e, [
       { label: 'Paste', icon: ClipboardPaste, hint: keys('Ctrl+V'), onSelect: () => void paste(cwd) },
@@ -493,6 +611,8 @@ export function FilesView(props: {
       { label: 'Upload Files…', icon: FileUp, onSelect: () => upload('files') },
       { label: 'Upload Folder…', icon: FolderUp, onSelect: () => upload('folder') },
       'separator',
+      { label: 'Search on the Server…', icon: FolderSearch, hint: keys('Ctrl+Shift+F'), onSelect: () => setSearching(true) },
+      { label: 'Properties of This Folder…', icon: Info, onSelect: () => setPropsFor([{ name: cwd === '/' ? '/' : cwd.split('/').pop()!, path: cwd, type: 'dir', size: 0, modifiedAt: 0 }]) },
       { label: showHidden ? 'Hide Hidden Files' : 'Show Hidden Files', icon: showHidden ? EyeOff : Eye, onSelect: toggleHidden },
       { label: 'Reload', icon: RotateCw, onSelect: () => void load(cwd) }
     ])
@@ -549,6 +669,7 @@ export function FilesView(props: {
   const shortcuts = useRef<Record<string, () => void>>({})
   shortcuts.current = {
     f: () => filterRef.current?.focus(),
+    'shift+f': () => setSearching(true),
     c: () => void copyItems(selEntries, 'copy'),
     x: () => void copyItems(selEntries, 'cut'),
     v: () => void paste(cwd),
@@ -556,8 +677,8 @@ export function FilesView(props: {
   }
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      const action = shortcuts.current[e.key.toLowerCase()]
-      if (!action || !mod(e) || e.shiftKey || e.altKey || e.defaultPrevented) return
+      const action = shortcuts.current[(e.shiftKey ? 'shift+' : '') + e.key.toLowerCase()]
+      if (!action || !mod(e) || e.altKey || e.defaultPrevented) return
       if (!areaRef.current || areaRef.current.offsetParent === null) return // another tab or the editor is showing
       const el = e.target as HTMLElement
       if (el.closest('input, textarea, select, [contenteditable], [role="dialog"]')) return
@@ -573,6 +694,17 @@ export function FilesView(props: {
   const cutPaths = new Set(getRemoteClip()?.mode === 'cut' && getRemoteClip()?.hostId === props.host.id ? getRemoteClip()!.entries.map((e) => e.path) : [])
 
   const connected = !!sid
+
+  // Large folders draw only the rows in view, with empty rows of the right height above and below.
+  const virtual = entries.length > VIRTUAL_FROM
+  const viewHeight = areaRef.current?.clientHeight ?? 800
+  const first = virtual ? Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN) : 0
+  const last = virtual ? Math.min(entries.length, Math.ceil((scrollTop + viewHeight) / rowHeight) + OVERSCAN) : entries.length
+  const cursorIndex = cursorPath ? entries.findIndex((x) => x.path === cursorPath) : -1
+  const measureRow = (el: HTMLTableRowElement | null): void => {
+    const h = el?.getBoundingClientRect().height ?? 0
+    if (h > 0 && Math.abs(h - rowHeight) > 0.25) setRowHeight(h)
+  }
 
   return (
     <>
@@ -621,6 +753,8 @@ export function FilesView(props: {
           }
         />
         <IconButton icon={Download} label="Download" disabled={!selEntries.length} onClick={() => download(selEntries)} />
+        <IconButton icon={FolderSearch} label="Search on the Server" disabled={!connected} onClick={() => setSearching(true)} />
+        <IconButton icon={Info} label="Properties" disabled={!selEntries.length} onClick={() => setPropsFor(selEntries)} />
         <IconButton icon={Undo2} label={undoStep ? `Undo ${undoStep.label}` : 'Undo'} disabled={!connected || !undoStep} onClick={() => void undo()} />
         <IconButton icon={Trash2} label="Delete" disabled={!selEntries.length} onClick={() => void remove(selEntries)} />
         <span className="sep" />
@@ -650,10 +784,14 @@ export function FilesView(props: {
         ) : (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '6px 12px', borderBottom: '1px solid var(--line)' }}>
+              <span className="tree-toggle">
+                <IconButton icon={FolderTreeIcon} label="Folder Tree" pressed={showTree} onClick={toggleTree} />
+              </span>
               <span style={{ display: 'contents' }} {...(cwd === '/' ? {} : dropProps(parentOf(cwd)))} onDragLeave={() => setDropTarget(null)}>
                 <IconButton icon={ArrowUp} label="Enclosing Folder" disabled={cwd === '/'} onClick={() => void load(parentOf(cwd))} />
               </span>
               <IconButton icon={RotateCw} label="Reload" onClick={() => void load(cwd)} />
+              <IconButton icon={Star} label={bookmarks.includes(cwd) ? 'Bookmarks (This Folder Is Bookmarked)' : 'Bookmarks'} pressed={bookmarks.includes(cwd)} onClick={bookmarkMenu} />
               {pathEdit !== null ? (
                 <form
                   style={{ flex: 1, marginLeft: 4 }}
@@ -706,26 +844,24 @@ export function FilesView(props: {
               </div>
             </div>
 
+            <div className="file-split">
+            {showTree && sid && (
+              <FolderTree sid={sid} cwd={cwd} showHidden={showHidden} listing={listing} onOpen={(p) => void load(p)} dropProps={dropProps} onDragLeave={() => setDropTarget(null)} />
+            )}
             <div
               ref={areaRef}
               className={`file-area${dropTarget === cwd ? ' drop-here' : ''}`}
               tabIndex={0}
+              role="group"
+              aria-label={`Files in ${cwd}`}
+              aria-activedescendant={cursorIndex >= first && cursorIndex < last ? `${rowId}-${cursorIndex}` : undefined}
               {...dropProps(cwd)}
               onDragLeave={(e) => {
                 if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropTarget(null)
               }}
               onContextMenu={areaMenu}
-              onKeyDown={(e) => {
-                // Mac keyboards have no Delete key: Finder deletes with Cmd+Backspace.
-                if (e.key === 'Delete' || (isMac && e.metaKey && e.key === 'Backspace')) void remove(selEntries)
-                else if (e.key === 'Backspace') void load(parentOf(cwd))
-                if (e.key === 'Enter' && selEntries.length === 1) openEntry(selEntries[0])
-                if (e.key === 'F2' && selEntries.length === 1) rename(selEntries[0])
-                if (mod(e) && e.key.toLowerCase() === 'a') {
-                  e.preventDefault()
-                  setSelected(new Set(entries.map((x) => x.path)))
-                }
-              }}
+              onKeyDown={listKey}
+              onScroll={(e) => virtual && setScrollTop(e.currentTarget.scrollTop)}
             >
               {ownDrag && cwd !== '/' && (
                 <div className="drop-up" {...dropProps(parentOf(cwd))}>
@@ -733,7 +869,7 @@ export function FilesView(props: {
                 </div>
               )}
               {entries.length > 0 ? (
-                <table className="table">
+                <table className="table" role="grid" aria-multiselectable="true" aria-rowcount={entries.length + 1} aria-label={`Files in ${cwd}`}>
                   <thead>
                     <tr>
                       <th aria-sort={sort.key === 'name' ? (sort.desc ? 'descending' : 'ascending') : undefined}>
@@ -755,10 +891,19 @@ export function FilesView(props: {
                     </tr>
                   </thead>
                   <tbody>
-                    {entries.map((e, i) => (
+                    {first > 0 && (
+                      <tr className="spacer" aria-hidden="true">
+                        <td colSpan={4} style={{ height: first * rowHeight }} />
+                      </tr>
+                    )}
+                    {entries.slice(first, last).map((e, k, shown, i = first + k) => (
                       <tr
                         key={e.path}
+                        id={`${rowId}-${i}`}
+                        ref={k === 0 ? measureRow : undefined}
+                        aria-rowindex={i + 2}
                         aria-selected={selected.has(e.path)}
+                        data-cursor={e.path === cursorPath || undefined}
                         data-cut={cutPaths.has(e.path) || undefined}
                         draggable
                         onDragStart={(ev) => startDrag(ev, e)}
@@ -776,6 +921,11 @@ export function FilesView(props: {
                         <td className="dim mono">{e.permissions ?? ''}</td>
                       </tr>
                     ))}
+                    {last < entries.length && (
+                      <tr className="spacer" aria-hidden="true">
+                        <td colSpan={4} style={{ height: (entries.length - last) * rowHeight }} />
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               ) : (
@@ -792,6 +942,7 @@ export function FilesView(props: {
               )}
               {dropTarget && <div className="drop-pill">{ownDrag ? `Move to ${dropTarget}` : `Upload to ${dropTarget}`}</div>}
             </div>
+            </div>
           </>
         )}
 
@@ -801,7 +952,10 @@ export function FilesView(props: {
       </div>
       {menu.element}
       {ask && <AskSheet {...ask} close={() => setAsk(null)} />}
-      {permsFor && <PermissionsSheet items={permsFor} close={() => setPermsFor(null)} apply={(mode) => void applyPermissions(permsFor, mode)} />}
+      {propsFor && sid && (
+        <PropertiesSheet sid={sid} canChown={props.host.protocol === 'ssh'} items={propsFor} close={() => setPropsFor(null)} changed={() => void load(cwdRef.current)} />
+      )}
+      {searching && sid && <SearchSheet sid={sid} root={cwd} onReveal={revealHit} close={() => setSearching(false)} />}
     </>
   )
 }
@@ -836,78 +990,6 @@ function AskSheet(props: { title: string; label: string; value: string; action: 
       >
         <input className="field" aria-label={props.label} autoFocus value={v} onChange={(e) => setV(e.target.value)} onFocus={(e) => e.target.select()} />
       </form>
-    </Sheet>
-  )
-}
-
-function PermissionsSheet(props: { items: RemoteEntry[]; close: () => void; apply: (mode: number) => void }) {
-  const [mode, setMode] = useState(() => modeOf(props.items[0].permissions))
-  const octal = mode.toString(8).padStart(3, '0')
-  const who = ['Owner', 'Group', 'Everyone']
-  const what = ['Read', 'Write', 'Run / open folder']
-  const title = props.items.length === 1 ? `Permissions of “${props.items[0].name}”` : `Permissions of ${countOf(props.items.length)}`
-  return (
-    <Sheet
-      size="narrow"
-      title={title}
-      onClose={props.close}
-      footer={
-        <>
-          <button className="btn" onClick={props.close}>
-            Cancel
-          </button>
-          <button
-            className="btn prominent"
-            onClick={() => {
-              props.close()
-              props.apply(mode)
-            }}
-          >
-            Apply
-          </button>
-        </>
-      }
-    >
-      <table className="perms">
-        <thead>
-          <tr>
-            <th />
-            {what.map((w) => (
-              <th key={w}>{w}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {who.map((name, row) => (
-            <tr key={name}>
-              <th>{name}</th>
-              {what.map((w, col) => {
-                const bit = 1 << (8 - (row * 3 + col))
-                return (
-                  <td key={w}>
-                    <input type="checkbox" aria-label={`${name}: ${w}`} checked={(mode & bit) !== 0} onChange={() => setMode(mode ^ bit)} />
-                  </td>
-                )
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <p className="perms-octal">
-        <label>
-          Numeric{' '}
-          <input
-            className="field mono"
-            aria-label="Numeric permissions"
-            value={octal}
-            maxLength={3}
-            onChange={(e) => /^[0-7]{1,3}$/.test(e.target.value) && setMode(parseInt(e.target.value, 8))}
-            onFocus={(e) => e.target.select()}
-          />
-        </label>
-        <span className="mono">{BITS.map((c, i) => (mode & (1 << (8 - i)) ? c : '-')).join('')}</span>
-      </p>
-      {props.items.length > 1 && <p>All selected items get the same permissions. Contents of folders are not changed.</p>}
     </Sheet>
   )
 }

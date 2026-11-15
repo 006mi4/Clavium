@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { app, clipboard, dialog, ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { z } from 'zod'
 import type { AppInfo, InvokeChannel } from '@shared/ipc'
-import type { HostRecord, HostSummary, PromptResponse, RemoteEntry } from '@shared/types'
+import { FTP_ENCODINGS, type HostRecord, type HostSummary, type PromptResponse, type RemoteEntry } from '@shared/types'
 import type { AuditLog } from './core/audit'
 import { randomId } from './core/crypto'
 import { buildKeyRecord, generateKey, summarizeKey } from './core/keys'
@@ -70,7 +70,8 @@ const hostInputSchema = z.object({
   aiAccess: z.enum(['none', 'read', 'full']),
   aiConfirm: z.enum(['all', 'changes', 'none']),
   notes: z.string().max(10_000),
-  forwards: z.array(forwardSchema).max(50)
+  forwards: z.array(forwardSchema).max(50),
+  ftpEncoding: z.enum(FTP_ENCODINGS).optional()
 })
 
 const entrySchema = z.object({
@@ -79,7 +80,11 @@ const entrySchema = z.object({
   type: z.enum(['file', 'dir', 'link', 'other']),
   size: z.number(),
   modifiedAt: z.number(),
-  permissions: z.string().max(20).optional()
+  permissions: z.string().max(20).optional(),
+  uid: z.number().int().min(0).optional(),
+  gid: z.number().int().min(0).optional(),
+  owner: z.string().max(64).optional(),
+  group: z.string().max(64).optional()
 })
 
 const promptResponseSchema = z.discriminatedUnion('kind', [
@@ -166,12 +171,26 @@ export function registerIpc(ctx: IpcContext): void {
         ...fields,
         id: existing?.id ?? randomId(),
         password: password === undefined ? existing?.password : password === null ? undefined : password,
+        bookmarks: existing?.bookmarks,
+        lastPath: existing?.lastPath,
         createdAt: existing?.createdAt ?? now,
         updatedAt: now
       }
       d.hosts = existing ? d.hosts.map((h) => (h.id === record.id ? record : h)) : [...d.hosts, record]
       return summarizeHost(record)
     })
+  })
+  // What the file manager remembers per host. Kept in the vault: folder names can tell a lot.
+  const storedPath = remotePath.regex(/^[^\r\n\0]+$/)
+  handle('hosts:setBookmarks', z.tuple([id, z.array(storedPath).max(200)]), (hostId, paths) =>
+    ctx.vault.update((d) => {
+      const h = d.hosts.find((x) => x.id === hostId)
+      if (h) h.bookmarks = [...new Set(paths)]
+    })
+  )
+  handle('hosts:rememberPath', z.tuple([id, storedPath]), async (hostId, path) => {
+    const h = ctx.vault.data.hosts.find((x) => x.id === hostId)
+    if (h && h.lastPath !== path) await ctx.vault.update(() => void (h.lastPath = path))
   })
   handle('hosts:delete', z.tuple([id]), (hostId) =>
     ctx.vault.update((d) => {
@@ -371,7 +390,24 @@ export function registerIpc(ctx: IpcContext): void {
     return ctx.files.dragOut(fid, entries as RemoteEntry[], (file) => win.webContents.startDrag({ file, icon: ctx.dragIcon() }))
   })
   handle('files:dragCancel', z.tuple([]), () => ctx.files.cancelDrag())
-  handle('files:chmod', z.tuple([id, remotePath, z.number().int().min(0).max(0o777)]), (fid, p, mode) => ctx.files.chmod(fid, p, mode))
+  const chmodOptions = z.object({
+    mode: z.number().int().min(0).max(0o777),
+    recursive: z.boolean(),
+    target: z.enum(['all', 'files', 'folders']),
+    foldersOpen: z.boolean()
+  })
+  const ownerSchema = z.object({ uid: z.number().int().min(0).max(0xffffffff).optional(), gid: z.number().int().min(0).max(0xffffffff).optional() })
+  handle('files:chmodTree', z.tuple([id, entryList, chmodOptions, id]), (fid, entries, options, token) =>
+    ctx.files.chmodTree(fid, entries as RemoteEntry[], options, token)
+  )
+  handle('files:chownTree', z.tuple([id, entryList, ownerSchema, z.boolean(), id]), (fid, entries, owner, recursive, token) =>
+    ctx.files.chownTree(fid, entries as RemoteEntry[], owner, recursive, token)
+  )
+  handle('files:folderSize', z.tuple([id, entryList, id]), (fid, entries, token) => ctx.files.folderSize(fid, entries as RemoteEntry[], token))
+  handle('files:search', z.tuple([id, remotePath, z.string().trim().min(1).max(200), id]), (fid, root, query, token) =>
+    ctx.files.search(fid, root, query, token)
+  )
+  handle('files:cancelWork', z.tuple([id]), (token) => ctx.files.cancelWork(token))
   handle('files:queueGet', z.tuple([]), () => ctx.files.transfers())
   handle(
     'files:queueAction',

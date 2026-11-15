@@ -34,15 +34,24 @@ export interface HostRecord {
   aiConfirm: AiConfirm
   notes: string
   forwards: PortForward[]
+  /** How an FTP server spells file names. Missing means UTF-8. */
+  ftpEncoding?: FtpEncoding
+  /** Folders the user marked in the file manager. */
+  bookmarks?: string[]
+  /** The folder the file manager showed last. */
+  lastPath?: string
   createdAt: number
   updatedAt: number
 }
+
+export const FTP_ENCODINGS = ['utf8', 'latin1'] as const
+export type FtpEncoding = (typeof FTP_ENCODINGS)[number]
 
 /** Host as seen by the renderer: no secrets, only a flag. */
 export type HostSummary = Omit<HostRecord, 'password'> & { hasPassword: boolean }
 
 /** Input from the host editor. `password: undefined` keeps the stored one, `null` clears it. */
-export type HostInput = Omit<HostRecord, 'id' | 'createdAt' | 'updatedAt' | 'password'> & {
+export type HostInput = Omit<HostRecord, 'id' | 'createdAt' | 'updatedAt' | 'password' | 'bookmarks' | 'lastPath'> & {
   id?: string
   password?: string | null
 }
@@ -114,6 +123,55 @@ export interface RemoteEntry {
   size: number
   modifiedAt: number
   permissions?: string
+  /** Numeric owner and group (SFTP). */
+  uid?: number
+  gid?: number
+  /** Names of owner and group, where the server tells them. */
+  owner?: string
+  group?: string
+}
+
+/** What a folder holds, with everything inside. */
+export interface FolderSize {
+  bytes: number
+  files: number
+  folders: number
+  /** Folders that could not be read and are missing from the numbers. */
+  unreadable: number
+  /** False when the count was stopped early. */
+  complete: boolean
+}
+
+export interface ChmodOptions {
+  /** 0o000 to 0o777 */
+  mode: number
+  /** Also change what is inside of folders. */
+  recursive: boolean
+  /** Which of the content of folders is changed. */
+  target: 'all' | 'files' | 'folders'
+  /** Folders may be opened by whoever may read them, even when `mode` has no "run" bit. */
+  foldersOpen: boolean
+}
+
+/** Result of a change that went over many items. */
+export interface TreeChange {
+  changed: number
+  failed: { path: string; error: string }[]
+  complete: boolean
+}
+
+/** News from a running search on the server. */
+export interface SearchUpdate {
+  token: string
+  hits: RemoteEntry[]
+  scanned: number
+}
+
+export interface SearchResult {
+  scanned: number
+  found: number
+  unreadable: number
+  ended: 'complete' | 'limit' | 'stopped'
 }
 
 export interface AuditEntry {

@@ -10,8 +10,10 @@ import type {
   DockerImage,
   DockerOverview,
   DockerRestartPolicy,
+  ChmodOptions,
   DockerStats,
   ExistingRule,
+  FolderSize,
   CopyResult,
   HostInput,
   HostSummary,
@@ -23,12 +25,14 @@ import type {
   QueueAction,
   RemoteEntry,
   ScreenList,
+  SearchResult,
   TerminalTarget,
   SshKeySummary,
   TextFile,
   TextFileVersion,
   TextWriteResult,
   TransferSnapshot,
+  TreeChange,
   UpdateState,
   VaultState
 } from '@shared/types'
@@ -63,6 +67,8 @@ export const api = {
   hosts: {
     list: () => call<HostSummary[]>('hosts:list'),
     save: (h: HostInput) => call<HostSummary>('hosts:save', h),
+    setBookmarks: (id: string, paths: string[]) => call<void>('hosts:setBookmarks', id, paths),
+    rememberPath: (id: string, path: string) => call<void>('hosts:rememberPath', id, path),
     remove: (id: string) => call<void>('hosts:delete', id),
     duplicate: (id: string) => call<HostSummary>('hosts:duplicate', id)
   },
@@ -132,7 +138,12 @@ export const api = {
     clipboardFiles: () => call<string[]>('files:clipboardFiles'),
     dragOut: (id: string, entries: RemoteEntry[]) => call<string | null>('files:dragOut', id, entries),
     dragCancel: () => call<void>('files:dragCancel'),
-    chmod: (id: string, path: string, mode: number) => call<void>('files:chmod', id, path, mode),
+    chmodTree: (id: string, entries: RemoteEntry[], options: ChmodOptions, token: string) => call<TreeChange>('files:chmodTree', id, entries, options, token),
+    chownTree: (id: string, entries: RemoteEntry[], owner: { uid?: number; gid?: number }, recursive: boolean, token: string) =>
+      call<TreeChange>('files:chownTree', id, entries, owner, recursive, token),
+    folderSize: (id: string, entries: RemoteEntry[], token: string) => call<FolderSize>('files:folderSize', id, entries, token),
+    search: (id: string, root: string, query: string, token: string) => call<SearchResult>('files:search', id, root, query, token),
+    cancelWork: (token: string) => call<void>('files:cancelWork', token),
     queue: () => call<TransferSnapshot>('files:queueGet'),
     queueAction: (action: QueueAction, transferId?: string) => call<void>('files:queueAction', action, transferId ?? null),
     queueAnswer: (transferId: string, rule: Exclude<ExistingRule, 'ask'>, all: boolean) => call<void>('files:queueAnswer', transferId, rule, all),

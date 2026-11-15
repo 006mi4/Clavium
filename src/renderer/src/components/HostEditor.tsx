@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ArrowRight, Plus, X } from 'lucide-react'
-import type { AiAccess, AiConfirm, AuthMethod, HostInput, HostSummary, PortForward, Protocol, SshKeySummary } from '@shared/types'
+import type { AiAccess, AiConfirm, AuthMethod, FtpEncoding, HostInput, HostSummary, PortForward, Protocol, SshKeySummary } from '@shared/types'
 import { api, hostToInput } from '../api'
 import { Group, IconButton, Note, Row, Select, Sheet, Switch, useToast } from '../ui'
 import { isMac } from '../platform'
@@ -143,6 +143,19 @@ export function HostEditor(props: {
           <Row label="User">
             <input className="field mono" value={h.username} placeholder="root" onChange={(e) => set('username', e.target.value)} />
           </Row>
+          {!isSsh && (
+            <Row label="File names" hint="Choose Western European only when names with accents or umlauts look wrong.">
+              <Select<FtpEncoding>
+                label="Character set of file names"
+                value={h.ftpEncoding ?? 'utf8'}
+                onChange={(v) => set('ftpEncoding', v)}
+                options={[
+                  { value: 'utf8', label: 'UTF-8' },
+                  { value: 'latin1', label: 'Western European (ISO 8859-1)' }
+                ]}
+              />
+            </Row>
+          )}
         </Group>
         {h.protocol === 'ftp' && (
           <div style={{ marginTop: 8 }}>

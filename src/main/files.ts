@@ -3,16 +3,17 @@ import { existsSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { extname, join, resolve, sep } from 'node:path'
-import { DEFAULT_TRANSFER_SETTINGS, type ClipboardCopyResult, type CopyResult, type ExistingRule, type HostRecord, type MovePair, type MoveResult, type QueueAction, type RemoteEntry, type TransferSettings, type TransferSnapshot } from '@shared/types'
+import { DEFAULT_TRANSFER_SETTINGS, type ChmodOptions, type FolderSize, type SearchResult, type TreeChange, type ClipboardCopyResult, type CopyResult, type ExistingRule, type HostRecord, type MovePair, type MoveResult, type QueueAction, type RemoteEntry, type TransferSettings, type TransferSnapshot } from '@shared/types'
 import { randomId } from './core/crypto'
 import { driveRoots, watchForDrop } from './core/dropwatch'
 import { safeLocalName, TransferQueue } from './core/queue'
+import { chmodTree, chownTree, folderSize, searchTree } from './core/remotetools'
 import { copyEntries, measure, moveEntries } from './core/transfer'
 import type { Prompter } from './core/prompter'
 import { openRemoteFs, type RemoteFs } from './core/remotefs'
 import type { Vault } from './core/vault'
 
-type Send = (channel: 'files:queue' | 'files:changed' | 'files:closed', ...args: unknown[]) => void
+type Send = (channel: 'files:queue' | 'files:changed' | 'files:closed' | 'files:searchHits', ...args: unknown[]) => void
 
 export { safeLocalName }
 
@@ -125,12 +126,61 @@ export class FileManager {
       this.send('files:closed', id)
     }
     this.queueAction('cancel')
+    for (const abort of this.work.values()) abort.abort()
     this.drag?.cancel()
     void this.forgetClipboard()
   }
 
   chmod(id: string, path: string, mode: number): Promise<void> {
     return this.get(id).chmod(path, mode)
+  }
+
+  // ------------------------------------------- work that goes through folders ----
+
+  /** Long-running work by the token the interface gave it, so it can be stopped. */
+  private work = new Map<string, AbortController>()
+
+  /**
+   * Run work that reads many folders on a connection of its own, so the user can go on browsing
+   * meanwhile (FTP does one thing at a time per connection).
+   */
+  private async background<T>(id: string, token: string, run: (fs: RemoteFs, signal: AbortSignal) => Promise<T>): Promise<T> {
+    const main = this.get(id)
+    const abort = new AbortController()
+    this.work.get(token)?.abort()
+    this.work.set(token, abort)
+    const fork = await main.fork().catch(() => null)
+    // Stopping also has to end a request that is on its way.
+    abort.signal.addEventListener('abort', () => fork?.close())
+    try {
+      return await run(fork ?? main, abort.signal)
+    } finally {
+      if (this.work.get(token) === abort) this.work.delete(token)
+      fork?.close()
+    }
+  }
+
+  cancelWork(token: string): void {
+    this.work.get(token)?.abort()
+  }
+
+  folderSize(id: string, entries: RemoteEntry[], token: string): Promise<FolderSize> {
+    return this.background(id, token, (fs, signal) => folderSize(fs, entries, signal))
+  }
+
+  /** Search by name below `root`. Hits arrive as `files:searchHits` events while this runs. */
+  search(id: string, root: string, query: string, token: string): Promise<SearchResult> {
+    return this.background(id, token, (fs, signal) =>
+      searchTree(fs, root, query, signal, (r) => this.quietly(() => this.send('files:searchHits', { token, ...r })))
+    )
+  }
+
+  chmodTree(id: string, entries: RemoteEntry[], options: ChmodOptions, token: string): Promise<TreeChange> {
+    return this.background(id, token, (fs, signal) => chmodTree(fs, entries, options, signal))
+  }
+
+  chownTree(id: string, entries: RemoteEntry[], owner: { uid?: number; gid?: number }, recursive: boolean, token: string): Promise<TreeChange> {
+    return this.background(id, token, (fs, signal) => chownTree(fs, entries, owner, recursive, signal))
   }
 
   // ------------------------------------------------- move, copy, conflicts ----

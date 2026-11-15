@@ -461,7 +461,7 @@ describe('Clavium desktop app', () => {
 
     // permissions: the sheet starts from the current ones, the server gets the new mode
     await row('readme.txt').click({ button: 'right' })
-    await page.getByRole('menuitem', { name: 'Permissions…' }).click()
+    await page.getByRole('menuitem', { name: 'Properties…' }).click()
     const sheet = page.getByRole('dialog')
     await sheet.getByLabel('Numeric permissions').fill('640')
     expect(await sheet.getByLabel('Owner: Write').isChecked()).toBe(true)
@@ -559,6 +559,116 @@ describe('Clavium desktop app', () => {
     for (const name of ['bundle', 'big.bin', 'readme (1).txt']) rmSync(onServer(name), { recursive: true, force: true })
     await view().getByRole('button', { name: 'Reload' }).click()
     await row('bundle').waitFor({ state: 'detached' })
+  })
+
+  it('browses with the keyboard, the folder tree, bookmarks and the search, and shows properties', async () => {
+    const row = (name: string) => view().locator('.table tbody tr:not(.spacer)', { hasText: name })
+    const area = view().locator('.file-area')
+    const tree = view().getByRole('tree', { name: 'Folders' })
+    const selectedNames = async (): Promise<string[]> => (await view().locator('.table tbody tr[aria-selected="true"] td.name').allInnerTexts()).map((t) => t.trim())
+    const onServer = (...p: string[]): string => join(srv.root, ...p)
+    mkdirSync(onServer('proj', 'assets'), { recursive: true })
+    writeFileSync(onServer('proj', 'assets', 'app.css'), 'body{')
+    writeFileSync(onServer('proj', 'app.log'), 'log')
+    mkdirSync(onServer('many'))
+    for (let i = 0; i < 1500; i++) writeFileSync(onServer('many', `f${String(i).padStart(4, '0')}.txt`), '')
+    await view().getByRole('button', { name: 'Reload' }).click()
+    await row('proj').waitFor()
+
+    // typing a name jumps to it, Enter opens, Backspace goes back up
+    await area.focus()
+    await page.keyboard.type('pr')
+    expect(await selectedNames()).toEqual(['proj'])
+    await page.keyboard.press('Enter')
+    await row('app.log').waitFor()
+    await page.keyboard.press('Home')
+    expect(await selectedNames()).toEqual(['assets'])
+    await page.keyboard.press('Shift+ArrowDown')
+    expect(await selectedNames()).toEqual(['assets', 'app.log'])
+    await page.keyboard.press('ArrowUp')
+    expect(await selectedNames()).toEqual(['assets'])
+    expect(await area.getAttribute('aria-activedescendant')).toBe(await row('assets').getAttribute('id'))
+    await page.keyboard.press('Backspace')
+    await row('readme.txt').waitFor()
+
+    // the tree follows, and can be used with the keyboard alone
+    // "proj" is open in the tree because the list was just in it: Left closes it, Right opens it again
+    await tree.getByRole('treeitem', { name: 'proj', exact: true }).focus()
+    await page.keyboard.press('ArrowLeft')
+    await tree.getByRole('treeitem', { name: 'assets', exact: true }).waitFor({ state: 'detached' })
+    await page.keyboard.press('ArrowRight')
+    await tree.getByRole('treeitem', { name: 'assets', exact: true }).waitFor()
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Enter')
+    await row('app.css').waitFor()
+    expect(await tree.getByRole('treeitem', { name: 'assets', exact: true }).getAttribute('aria-selected')).toBe('true')
+    await page.keyboard.press('ArrowLeft') // closes the folder
+    await page.keyboard.press('ArrowLeft') // goes to the folder above
+    await page.keyboard.press('ArrowLeft') // closes that one too
+    await tree.getByRole('treeitem', { name: 'assets', exact: true }).waitFor({ state: 'detached' })
+
+    // a bookmark brings the folder back; it is stored with the host, as is the last folder
+    await view().getByRole('button', { name: 'Bookmarks', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Add Bookmark for This Folder' }).click()
+    await tree.getByRole('treeitem', { name: 'Root folder' }).click()
+    await row('readme.txt').waitFor()
+    await view().getByRole('button', { name: 'Bookmarks', exact: true }).click()
+    await page.getByRole('menuitem', { name: '/proj/assets' }).click()
+    await row('app.css').waitFor()
+    await page.waitForTimeout(1800)
+    const stored = (await page.evaluate("window.clavium.invoke('hosts:list')")) as { name: string; bookmarks?: string[]; lastPath?: string }[]
+    expect(stored.find((h) => h.name === HOST)).toMatchObject({ bookmarks: ['/proj/assets'], lastPath: '/proj/assets' })
+    await view().getByRole('button', { name: /^Bookmarks/ }).click()
+    await page.getByRole('menuitem', { name: 'Remove Bookmark for This Folder' }).click()
+
+    // a large folder draws only what is in view, and the keyboard still reaches every row
+    await tree.getByRole('treeitem', { name: 'many', exact: true }).click()
+    await row('f0000.txt').waitFor()
+    expect(await view().locator('.table').getAttribute('aria-rowcount')).toBe('1501')
+    expect(await view().locator('.table tbody tr:not(.spacer)').count()).toBeLessThan(200)
+    await area.focus()
+    await page.keyboard.press('End')
+    await row('f1499.txt').waitFor()
+    expect(await selectedNames()).toEqual(['f1499.txt'])
+    expect(await row('f1499.txt').getAttribute('aria-rowindex')).toBe('1501')
+    await page.keyboard.type('f0750')
+    await row('f0750.txt').waitFor()
+    expect(await selectedNames()).toEqual(['f0750.txt'])
+
+    // search below the current folder, and jump to a hit
+    await tree.getByRole('treeitem', { name: 'Root folder' }).click()
+    await row('readme.txt').waitFor()
+    await view().getByRole('button', { name: 'Search on the Server' }).click()
+    let sheet = page.getByRole('dialog')
+    await sheet.getByLabel('Name to search for').fill('app.*')
+    await page.keyboard.press('Enter')
+    await sheet.getByText(/^2 found in /).waitFor()
+    expect((await sheet.getByRole('list', { name: 'Search results' }).locator('.hit-name').allInnerTexts()).sort()).toEqual(['app.css', 'app.log'])
+    await sheet.getByRole('button', { name: /app\.css/ }).click()
+    await row('app.css').waitFor()
+    expect(await selectedNames()).toEqual(['app.css'])
+
+    // properties: size of a folder, permissions and owner with everything inside
+    await tree.getByRole('treeitem', { name: 'Root folder' }).click()
+    await row('proj').click()
+    await view().getByRole('button', { name: 'Properties', exact: true }).click()
+    sheet = page.getByRole('dialog')
+    await sheet.getByRole('button', { name: 'Calculate Size' }).click()
+    await sheet.getByText('8 B in 2 files and 2 folders').waitFor()
+    await sheet.getByLabel('Numeric permissions').fill('750')
+    await sheet.getByLabel('Also change everything inside').check()
+    await sheet.getByLabel('Group ID').fill('4242')
+    srv.chown.length = 0
+    await sheet.getByRole('button', { name: 'Apply' }).click()
+    await page.getByText('Permissions of 4 items changed.').waitFor()
+    await page.getByText('Owner of 4 items changed.').waitFor()
+    expect(srv.chown.map((c) => c.path).sort()).toEqual(['/proj', '/proj/app.log', '/proj/assets', '/proj/assets/app.css'])
+    expect(srv.chown.every((c) => c.gid === 4242)).toBe(true)
+    if (process.platform !== 'win32') expect(statSync(onServer('proj', 'assets', 'app.css')).mode & 0o777).toBe(0o750)
+
+    for (const name of ['proj', 'many']) rmSync(onServer(name), { recursive: true, force: true })
+    await view().getByRole('button', { name: 'Reload' }).click()
+    await row('proj').waitFor({ state: 'detached' })
   })
 
   let token = ''

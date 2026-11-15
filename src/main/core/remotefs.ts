@@ -85,6 +85,8 @@ export interface RemoteFs {
   rename(from: string, to: string): Promise<void>
   /** Set the permission bits (0o000 - 0o777). */
   chmod(path: string, mode: number): Promise<void>
+  /** Change owner and/or group by number. Rejects where the protocol cannot do that. */
+  chown(path: string, uid: number | undefined, gid: number | undefined): Promise<void>
   /**
    * A second, independent handle to the same server, used for one transfer. Closing it aborts
    * whatever it is doing without touching the session the user is browsing with.
@@ -192,6 +194,14 @@ export class SftpFs implements RemoteFs {
     await p<void>((cb) => this.sftp.chmod(path, mode & 0o777, (err) => cb(err, undefined)))
   }
 
+  async chown(path: string, uid: number | undefined, gid: number | undefined): Promise<void> {
+    assertSafeRemotePath(path)
+    if (uid === undefined && gid === undefined) return
+    // The protocol only knows both at once.
+    const now = uid === undefined || gid === undefined ? await p<Stats>((cb) => this.sftp.lstat(path, cb)) : undefined
+    await p<void>((cb) => this.sftp.chown(path, uid ?? (now as Stats).uid, gid ?? (now as Stats).gid, (err) => cb(err, undefined)))
+  }
+
   static async open(client: SshClient, ownsClient: boolean): Promise<SftpFs> {
     const sftp = await p<SFTPWrapper>((cb) => client.sftp((err, s) => cb(err, s)))
     return new SftpFs(client, sftp, ownsClient)
@@ -205,14 +215,21 @@ export class SftpFs implements RemoteFs {
     return p<string>((cb) => this.sftp.realpath('.', cb))
   }
 
-  private entry(path: string, attrs: Stats): RemoteEntry {
+  private entry(path: string, attrs: Stats, longname?: string): RemoteEntry {
+    // "-rw-r--r--  1 owner group  size date name": the only place where the names are told.
+    const cols = longname?.trim().split(/\s+/) ?? []
+    const named = cols.length >= 8 && /^[-a-z]/.test(cols[0])
     return {
       name: posix.basename(path) || path,
       path,
       type: typeFromMode(attrs.mode),
       size: attrs.size,
       modifiedAt: attrs.mtime * 1000,
-      permissions: permString(attrs.mode)
+      permissions: permString(attrs.mode),
+      uid: attrs.uid,
+      gid: attrs.gid,
+      owner: named ? cols[2].slice(0, 64) : undefined,
+      group: named ? cols[3].slice(0, 64) : undefined
     }
   }
 
@@ -221,7 +238,7 @@ export class SftpFs implements RemoteFs {
     const items = await p<FileEntryWithStats[]>((cb) => this.sftp.readdir(path, cb))
     return items
       .filter((i) => i.filename !== '.' && i.filename !== '..')
-      .map((i) => this.entry(posix.join(path, i.filename), i.attrs as Stats))
+      .map((i) => this.entry(posix.join(path, i.filename), i.attrs as Stats, i.longname))
   }
 
   async stat(path: string): Promise<RemoteEntry> {
@@ -468,6 +485,10 @@ export class FtpFs implements RemoteFs {
     })
   }
 
+  async chown(_path: string, _uid: number | undefined, _gid: number | undefined): Promise<void> {
+    throw new Error('Owner and group cannot be changed over FTP')
+  }
+
   private markClosed(): void {
     if (this.closed) return
     this.closed = true
@@ -526,6 +547,11 @@ export class FtpFs implements RemoteFs {
         }
         await client.login(host.username, password)
         await client.useDefaultSettings()
+        if (host.ftpEncoding && host.ftpEncoding !== 'utf8') {
+          // Servers that do not speak UTF-8: names are read and sent in the chosen character set.
+          await client.sendIgnoringError('OPTS UTF8 OFF')
+          client.ftp.encoding = host.ftpEncoding
+        }
         return client
       } catch (e) {
         client.close()
@@ -559,7 +585,7 @@ export class FtpFs implements RemoteFs {
     return this.run(() => this.client.pwd())
   }
 
-  private toEntry(dir: string, i: { name: string; type: FileType; size: number; modifiedAt?: Date; permissions?: { user: number; group: number; world: number } }): RemoteEntry {
+  private toEntry(dir: string, i: { name: string; type: FileType; size: number; modifiedAt?: Date; permissions?: { user: number; group: number; world: number }; user?: string; group?: string }): RemoteEntry {
     const type: RemoteEntry['type'] =
       i.type === FileType.Directory ? 'dir' : i.type === FileType.SymbolicLink ? 'link' : i.type === FileType.File ? 'file' : 'other'
     const perm = i.permissions
@@ -573,7 +599,9 @@ export class FtpFs implements RemoteFs {
       type,
       size: i.size,
       modifiedAt: i.modifiedAt ? i.modifiedAt.getTime() : 0,
-      permissions: perm
+      permissions: perm,
+      owner: i.user?.slice(0, 64) || undefined,
+      group: i.group?.slice(0, 64) || undefined
     }
   }
 

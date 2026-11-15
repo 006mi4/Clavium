@@ -19,15 +19,15 @@ Not part of this roadmap: a local file pane, and importing sites from FileZilla,
 
 ## Package B: browsing
 
-- [ ] Bookmarks for folders
-- [ ] Remember the last folder per host
-- [ ] Folder tree
-- [ ] Search on the server
-- [ ] Folder size
-- [ ] Recursive permissions, change owner (SFTP), properties dialog
-- [ ] Character set per FTP host
-- [ ] Virtualised file list for large folders
-- [ ] Arrow keys and type-to-jump
+- [x] Bookmarks for folders
+- [x] Remember the last folder per host
+- [x] Folder tree
+- [x] Search on the server
+- [x] Folder size
+- [x] Recursive permissions, change owner (SFTP), properties dialog
+- [x] Character set per FTP host
+- [x] Virtualised file list for large folders
+- [x] Arrow keys and type-to-jump
 
 ## Package C: synchronisation
 
@@ -44,9 +44,35 @@ Not part of this roadmap: a local file pane, and importing sites from FileZilla,
 - [ ] Image preview
 - [ ] Built-in editor beyond 2 MB and with more character sets than UTF-8
 
+## Open points from finished packages
+
+- [ ] Package A: setting the modification time over FTP (`MFMT`) has no automated test, because
+  the FTP test server does not know the command. It needs a test server that does, or a check
+  against a real server.
+- [ ] Package B: the character set of an FTP host can be UTF-8 or ISO 8859-1 only (what the FTP
+  library can do). The test covers reading names, not writing them: the test server cuts
+  non-ASCII letters out of commands when UTF-8 is switched off.
+- [ ] Package B: changing the owner is tested against a server that writes the request down
+  instead of carrying it out (that needs root).
+
 ## Status
 
-Package A is finished. Packages B, C and D are open; B is next.
+Packages A and B are finished. Packages C and D are open; C is next.
+
+### How package B is built
+
+- `src/main/core/remotetools.ts`: walking a tree on the server without following links, for the
+  folder size, the search by name, and recursive changes of permissions and owner.
+  `FileManager.background` runs such work on a connection of its own and can stop it by a token.
+- `RemoteEntry` carries `uid`, `gid`, `owner` and `group` where the server tells them.
+  `RemoteFs.chown` exists for SFTP and rejects for FTP.
+- Bookmarks and the last folder are kept in the host record in the vault (`bookmarks`,
+  `lastPath`), written through `hosts:setBookmarks` and `hosts:rememberPath`. `ftpEncoding` is a
+  field of the host editor.
+- `src/renderer/src/components/FileTools.tsx` has the folder tree, the search sheet and the
+  properties sheet. The list in `FilesView.tsx` draws only the rows in view once a folder has
+  more than 300 entries, and is driven by the keyboard through `listKey`.
+- Tests: `tests/remotetools.test.ts` and one scenario in `tests/e2e/app.e2e.ts`.
 
 ### How package A is built
 
