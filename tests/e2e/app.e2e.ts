@@ -12,6 +12,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { readClipboardFiles, writeClipboardFiles } from '../../src/main/fileclipboard'
 import { startTestSshServer, TEST_PASSWORD, TEST_USER, type TestSshServer } from '../helpers/testServer'
+import { freePort } from '../helpers/fixtures'
 
 // macOS has its own keys for a few shortcuts (Cmd+H hides the app, Home only scrolls).
 const MAC = process.platform === 'darwin'
@@ -26,7 +27,7 @@ let srv: TestSshServer
 let app: ElectronApplication
 let page: Page
 let dataDir: string
-const mcpPort = 41000 + Math.floor(Math.random() * 9000)
+let mcpPort = 0
 
 async function shot(name: string, alsoDark = false): Promise<void> {
   await page.waitForTimeout(300)
@@ -61,6 +62,7 @@ async function addHost(o: { name: string; group: string; user?: string; protocol
 
 beforeAll(async () => {
   mkdirSync(shots, { recursive: true })
+  mcpPort = await freePort()
   srv = await startTestSshServer()
   writeFileSync(join(srv.root, 'readme.txt'), 'Hello from the test server\n')
   writeFileSync(

@@ -1,4 +1,5 @@
 import { mkdtempSync } from 'node:fs'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { HostRecord } from '@shared/types'
@@ -64,4 +65,20 @@ export function sshHost(port: number, patch: Partial<HostRecord> = {}): HostReco
     updatedAt: 1,
     ...patch
   }
+}
+
+/**
+ * A port that is free right now, chosen by the operating system. A random number is not good
+ * enough: Windows reserves ranges of ports (for Hyper-V, among others) and answers with
+ * "permission denied" when a test happens to pick one of those.
+ */
+export function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createServer()
+    probe.once('error', reject)
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address()
+      probe.close(() => (address && typeof address === 'object' ? resolve(address.port) : reject(new Error('no port'))))
+    })
+  })
 }
