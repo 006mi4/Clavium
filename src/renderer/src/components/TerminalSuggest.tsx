@@ -65,6 +65,8 @@ class Engine {
    */
   awaiting = 0
   lastLength = 0
+  /** how much longer (or, after backspaces, shorter) the line is once everything typed has come back */
+  owed = 0
   lastTypedAt = 0
   /** Tab or Enter asked for the selected entry while typed characters were still on their way */
   pendingAccept: ReturnType<typeof setTimeout> | null = null
@@ -79,6 +81,7 @@ class Engine {
     this.generation++
     this.awaiting = 0
     this.lastLength = 0
+    this.owed = 0
     if (this.pendingAccept) clearTimeout(this.pendingAccept)
     this.pendingAccept = null
     // a command may have changed folders, branches or containers
@@ -180,8 +183,10 @@ export function useTerminalSuggest(opts: {
     const input = readInput(term, e.marker, e.startCol)
     if (input !== null) {
       // every character the line grew or shrank by is one echo that has arrived
-      e.awaiting = Math.max(0, e.awaiting - Math.abs([...input].length - e.lastLength))
-      e.lastLength = [...input].length
+      const length = [...input].length
+      e.awaiting = Math.max(0, e.awaiting - Math.abs(length - e.lastLength))
+      e.owed = e.awaiting === 0 ? 0 : e.owed - (length - e.lastLength)
+      e.lastLength = length
     }
     if (input === null || (!input.trim() && !e.forced)) return hide()
     const ctx = parseLine(input)
@@ -281,6 +286,7 @@ export function useTerminalSuggest(opts: {
     e.touched = false
     const typed = keystrokes(item, p.ctx)
     e.awaiting += [...typed].length
+    for (const c of typed) e.owed += c === '\x7f' ? -1 : 1
     void api.term.write(id, typed)
     opts.term.current?.focus()
   }
@@ -299,11 +305,11 @@ export function useTerminalSuggest(opts: {
   const requestAccept = (): void => {
     const e = engine.current
     // a key that the shell did not echo must not keep the list waiting for ever
-    if (Date.now() - e.lastTypedAt > 600) e.awaiting = 0
+    if (Date.now() - e.lastTypedAt > 600) e.awaiting = e.owed = 0
     if (e.awaiting === 0) return accept(popupRef.current?.selected ?? 0)
     if (e.pendingAccept) return
     e.pendingAccept = setTimeout(() => {
-      e.awaiting = 0
+      e.awaiting = e.owed = 0
       refresh()
       finishAccept()
     }, 500)
@@ -322,13 +328,18 @@ export function useTerminalSuggest(opts: {
         } else if (data === '\r' || data === '\n') {
           // Remember the line for this session; a line typed into a program is not a command.
           // The last keys may not have come back from the server yet, so the line is read a
-          // moment later, from the place where it started to its end.
+          // moment later. How long it is, is known now: what stands in front of the cursor plus
+          // what is still on its way. Whatever the shell shows behind that is not part of the
+          // command: a prompt on the right, or a suggestion of the shell in grey.
           if (e.marker && !e.context?.busy && term.buffer.active.type === 'normal') {
             const marker = e.marker
             const startCol = e.startCol
+            const shown = readInput(term, marker, startCol)
+            const length = e.awaiting > 0 ? e.lastLength + e.owed : shown === null ? 0 : [...shown].length
             e.marker = null
             setTimeout(() => {
-              const line = term.buffer.active.type === 'normal' ? readSentLine(term, marker, startCol)?.trim() : undefined
+              const whole = term.buffer.active.type === 'normal' ? readSentLine(term, marker, startCol) : null
+              const line = whole === null ? undefined : [...whole].slice(0, Math.max(0, length)).join('').trim()
               marker.dispose()
               if (!line || line.length > 500) return
               e.typedHistory = [line, ...e.typedHistory.filter((l) => l !== line)].slice(0, 200)
@@ -349,8 +360,10 @@ export function useTerminalSuggest(opts: {
           if (!e.marker) beginLine()
           e.lastTypedAt = Date.now()
           // plain characters and the backspace change the line by one; anything else is not counted
-          if (data === '\x7f' || (!data.startsWith('\x1b') && [...data].every((c) => c >= ' '))) e.awaiting += [...data].length
-          else e.awaiting = 0
+          if (data === '\x7f' || (!data.startsWith('\x1b') && [...data].every((c) => c >= ' '))) {
+            e.awaiting += [...data].length
+            e.owed += data === '\x7f' ? -1 : [...data].length
+          } else e.awaiting = e.owed = 0
         }
       },
       onKey(ev) {

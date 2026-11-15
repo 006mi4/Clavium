@@ -23,6 +23,8 @@ export interface TestSshServer {
   onExec?: (command: string) => string | undefined
   /** everything typed into the shells of this server, in the order it arrived */
   typed: string[]
+  /** text the shells show at the right edge of every new prompt, as zsh does with RPROMPT */
+  rightPrompt?: string
   /** cut every open connection, as a network failure would; the server keeps running */
   dropClients(): void
   close(): Promise<void>
@@ -97,14 +99,16 @@ export async function startTestSshServer(hostKey?: string): Promise<TestSshServe
         session.on('pty', (accept) => accept?.())
         session.on('window-change', (accept) => accept?.())
         // Minimal line-echo shell: answers "echo:<line>" for every line typed.
+        // The prompt; with a text at the right edge, the cursor goes there and back again.
+        const prompt = (): string => `$ ${api.rightPrompt ? `\x1b7\x1b[60G${api.rightPrompt}\x1b8` : ''}`
         const echoShell = (stream: ServerChannel, dir?: string): void => {
-          stream.write(`Welcome to the Clavium test server\r\n${dir ? `(in ${dir})\r\n` : ''}$ `)
+          stream.write(`Welcome to the Clavium test server\r\n${dir ? `(in ${dir})\r\n` : ''}${prompt()}`)
           let line = ''
           stream.on('data', (d: Buffer) => {
             for (const ch of d.toString('utf8')) {
               if (ch === '\r' || ch === '\n') {
                 if (line) typed.push(line)
-                stream.write(`\r\necho:${line}\r\n$ `)
+                stream.write(`\r\necho:${line}\r\n${prompt()}`)
                 if (line === 'exit') {
                   stream.exit(0)
                   stream.end()
@@ -116,7 +120,7 @@ export async function startTestSshServer(hostKey?: string): Promise<TestSshServe
                 line = [...line].slice(0, -1).join('')
               } else if (ch === '\x03') {
                 // Ctrl+C gives the line up
-                stream.write('^C\r\n$ ')
+                stream.write(`^C\r\n${prompt()}`)
                 line = ''
               } else {
                 line += ch

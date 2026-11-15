@@ -120,6 +120,12 @@ describe('workspaces and terminal suggestions', () => {
     await page.keyboard.press('Enter')
     await terminal(panes(), 'echo:git checkout feature/login').waitFor()
 
+    // From here on the shell shows a clock at the right edge of the prompt, as many do. It is not
+    // part of what is typed, and must not end up in the lines that are remembered.
+    srv.rightPrompt = '[12:00]'
+    await page.keyboard.press('Enter')
+    await terminal(panes(), '[12:00]').waitFor()
+
     // paths, with a space in the name
     await page.keyboard.type('cat re')
     await list.getByRole('option', { name: 'report 2026.txt' }).waitFor()
@@ -147,7 +153,8 @@ describe('workspaces and terminal suggestions', () => {
       })
       .toEqual(['cat report\\ 2026.txt', 'git checkout feature/login'])
     await page.keyboard.press('Tab')
-    await expect.poll(async () => (await panes().locator('.xterm-rows').innerText()).trimEnd().endsWith('$ cat report\\ 2026.txt')).toBe(true)
+    await expect.poll(async () => /\$ cat report\\ 2026\.txt\s+\[12:00\]\s*$/.test(await panes().locator('.xterm-rows').innerText())).toBe(true)
+    srv.rightPrompt = undefined
     await page.keyboard.press('Control+c')
     await page.keyboard.press('Enter')
   })
