@@ -4,7 +4,7 @@ import { posix, join } from 'node:path'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import net, { type AddressInfo } from 'node:net'
-import { Server, utils, type Connection } from 'ssh2'
+import { Server, utils, type Connection, type ServerChannel } from 'ssh2'
 
 const { STATUS_CODE, flagsToString } = utils.sftp
 
@@ -93,10 +93,9 @@ export async function startTestSshServer(hostKey?: string): Promise<TestSshServe
         const session = acceptSession()
         session.on('pty', (accept) => accept?.())
         session.on('window-change', (accept) => accept?.())
-        session.on('shell', (accept) => {
-          // Minimal line-echo shell: answers "echo:<line>" for every line typed.
-          const stream = accept()
-          stream.write('Welcome to the Clavium test server\r\n$ ')
+        // Minimal line-echo shell: answers "echo:<line>" for every line typed.
+        const echoShell = (stream: ServerChannel, dir?: string): void => {
+          stream.write(`Welcome to the Clavium test server\r\n${dir ? `(in ${dir})\r\n` : ''}$ `)
           let line = ''
           stream.on('data', (d: Buffer) => {
             for (const ch of d.toString('utf8')) {
@@ -107,15 +106,27 @@ export async function startTestSshServer(hostKey?: string): Promise<TestSshServe
                   stream.end()
                 }
                 line = ''
+              } else if (ch === '\x7f') {
+                // the backspace takes a character away, on the line and on the screen
+                if (line) stream.write('\b \b')
+                line = [...line].slice(0, -1).join('')
+              } else if (ch === '\x03') {
+                // Ctrl+C gives the line up
+                stream.write('^C\r\n$ ')
+                line = ''
               } else {
                 line += ch
                 stream.write(ch)
               }
             }
           })
-        })
+        }
+        session.on('shell', (accept) => echoShell(accept()))
         session.on('exec', (accept, _reject, info) => {
           const stream = accept()
+          // "start the login shell in this folder": what a terminal asks for that comes back where it was
+          const shellIn = /cd -- '\\''(.*?)'\\'' 2>\/dev\/null; exec "\$\{SHELL/.exec(info.command)
+          if (shellIn) return echoShell(stream, shellIn[1])
           if (info.command === 'sleep') {
             stream.on('close', () => undefined)
             return // never finishes -> client timeout

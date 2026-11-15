@@ -36,6 +36,22 @@ const FIND_SHELL = [
 
 export const CONTEXT_COMMAND = sh(`${FIND_SHELL}\nprintf '%s\\n%s\\n%s\\n%s\\n' ${MARK} "$name" "$cwd" "$HOME"`)
 
+/** Printed by `enterCheckCommand` when the folder can be entered. */
+export const DIR_OK = '__clavium_dir_ok__'
+
+/** Asks whether a folder still exists and may be entered. Changes nothing. */
+export function enterCheckCommand(cwd: string): string {
+  return sh(`cd -- ${shellQuote(cwd)} 2>/dev/null && printf '%s\\n' ${DIR_OK}`)
+}
+
+/**
+ * The login shell of the user, started in a folder: for a terminal that comes back where it was.
+ * The folder is quoted, never pasted in. If it is gone in the meantime, the shell starts at home.
+ */
+export function shellInCommand(cwd: string): string {
+  return sh(`cd -- ${shellQuote(cwd)} 2>/dev/null; exec "\${SHELL:-/bin/sh}" -l`)
+}
+
 const SHELLS = /^-?(ba|z|da|k|a|fi|tc|c)?sh$/
 
 export function parseContext(stdout: string): CompletionContext {

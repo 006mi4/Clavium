@@ -78,6 +78,10 @@ export function TerminalView(props: {
   onState: (s: ConnState) => void
   /** set when this tab shows something else than a login shell: a screen, a container log, a shell in a container */
   target?: { target: TerminalTarget; name: string }
+  /** the folder a login shell starts in: where this terminal was when it was last open */
+  startDir?: string
+  /** told the folder of the shell after every command, when it changed; left out: nobody wants to know */
+  onCwd?: (cwd: string) => void
   onOpenFiles: () => void
   onOpenScreen: (screen: { target: TerminalTarget; name: string }) => void
   onOpenDocker: () => void
@@ -107,6 +111,29 @@ export function TerminalView(props: {
   const suggest = useTerminalSuggest({ term: termRef, session: sessionRef, wrap: wrapRef, enabled: props.autocomplete && !props.target })
   const suggestRef = useRef(suggest)
   suggestRef.current = suggest
+  // Where the shell is, so that the terminal can start there again. Asked a moment after a line was
+  // sent, on a channel next to the shell; nothing is typed into the terminal for it.
+  const cwdRef = useRef(props.startDir)
+  const cwdTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const followRef = useRef({ onCwd: props.onCwd, plain: !props.target })
+  followRef.current = { onCwd: props.onCwd, plain: !props.target }
+  const followCwd = (delay: number): void => {
+    if (cwdTimer.current) clearTimeout(cwdTimer.current)
+    if (!followRef.current.onCwd || !followRef.current.plain) return
+    cwdTimer.current = setTimeout(() => {
+      const id = sessionRef.current
+      if (!id) return
+      api.term.completeContext(id).then(
+        (c) => {
+          // a program that has the terminal (an editor, another ssh) says nothing about the shell
+          if (id !== sessionRef.current || c.busy || !c.cwd || c.cwd === cwdRef.current) return
+          cwdRef.current = c.cwd
+          followRef.current.onCwd?.(c.cwd)
+        },
+        () => undefined
+      )
+    }, delay)
+  }
 
   const update = (s: ConnState, msg = ''): void => {
     setState(s)
@@ -156,13 +183,14 @@ export function TerminalView(props: {
         if (!sessionRef.current || !t) return
         suggestRef.current.onInput(t)
         void api.term.write(sessionRef.current, t)
+        if (/[\r\n]/.test(t)) followCwd(800)
       })
     }
     // Ctrl+Shift+C / Ctrl+Shift+V; right-click copies the selection or pastes.
     // On macOS Cmd+C / Cmd+V also work: they come from the Edit menu of the app.
     term.attachCustomKeyEventHandler((e) => {
-      if (e.type !== 'keydown') return true
       if (!suggestRef.current.onKey(e)) return false
+      if (e.type !== 'keydown') return true
       if (e.ctrlKey && e.shiftKey && e.code === 'KeyC') {
         const sel = term.getSelection()
         if (sel) void api.clipboard.write(sel)
@@ -191,6 +219,7 @@ export function TerminalView(props: {
       if (!sessionRef.current) return
       suggestRef.current.onInput(d)
       void api.term.write(sessionRef.current, d)
+      if (d.includes('\r')) followCwd(800)
     })
     const parsedSub = term.onWriteParsed(() => suggestRef.current.onOutput())
     const resizeSub = term.onResize(({ cols, rows }) => {
@@ -210,6 +239,7 @@ export function TerminalView(props: {
 
     return () => {
       ro.disconnect()
+      if (cwdTimer.current) clearTimeout(cwdTimer.current)
       offData()
       offExit()
       dataSub.dispose()
@@ -229,7 +259,7 @@ export function TerminalView(props: {
     update('connecting')
     fit()
     api.term
-      .open(props.host.id, Math.max(term.cols, 20), Math.max(term.rows, 5), props.target?.target)
+      .open(props.host.id, Math.max(term.cols, 20), Math.max(term.rows, 5), props.target?.target, props.target ? undefined : cwdRef.current)
       .then((id) => {
         if (cancelled) {
           void api.term.close(id)

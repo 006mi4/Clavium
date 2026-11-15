@@ -2,7 +2,7 @@ import type { Client, ClientChannel } from 'ssh2'
 import type { CompletionContext, HostRecord, ScreenList, TerminalTarget } from '@shared/types'
 import type { CompletionNeed } from '@shared/complete'
 import { parseHistory as parseShellHistory } from '@shared/complete'
-import { CONTEXT_COMMAND, HISTORY_COMMAND, listCommand, parseContext, parseList } from './core/completion'
+import { CONTEXT_COMMAND, DIR_OK, HISTORY_COMMAND, enterCheckCommand, listCommand, parseContext, parseList, shellInCommand } from './core/completion'
 import { logsCommand, shellCommand } from './core/docker'
 import { randomId } from './core/crypto'
 import type { Prompter } from './core/prompter'
@@ -36,8 +36,11 @@ export class TerminalManager {
    * A screen is attached directly, without a shell in between. Closing the tab then only ends the
    * connection, and screen reacts to that by detaching: the program inside keeps running, just as
    * after Ctrl+A, D. Nothing here ever asks a screen to quit; that is `endScreen`.
+   *
+   * `cwd`: the folder a plain shell starts in, for a terminal that is opened again where it was.
+   * A folder that is gone, or a server without `sh`, gives the usual shell in the home folder.
    */
-  async open(host: HostRecord, cols: number, rows: number, target?: TerminalTarget): Promise<string> {
+  async open(host: HostRecord, cols: number, rows: number, target?: TerminalTarget, cwd?: string): Promise<string> {
     if (target && host.protocol !== 'ssh') throw new Error('This needs an SSH connection')
     // The log of a container, or a shell inside one. Ending the tab ends only that command.
     const docker = target && 'dockerLogs' in target ? logsCommand(target.dockerLogs) : target && 'dockerShell' in target ? shellCommand(target.dockerShell) : null
@@ -48,7 +51,17 @@ export class TerminalManager {
     let attached: string | null = null
     const start = async (): Promise<ClientChannel> => {
       if (docker) return new Promise((resolve, reject) => client.exec(docker, { pty }, (err, s) => (err ? reject(err) : resolve(s))))
-      if (!screen) return new Promise((resolve, reject) => client.shell(pty, (err, s) => (err ? reject(err) : resolve(s))))
+      if (!screen) {
+        const there = cwd
+          ? await execCommand(client, enterCheckCommand(cwd), { timeoutMs: 5000, maxBytes: 4096 }).then(
+              // a line of its own: an answer that merely repeats the command does not count
+              (r) => r.stdout.split('\n').some((line) => line.trim() === DIR_OK),
+              () => false
+            )
+          : false
+        if (cwd && there) return new Promise((resolve, reject) => client.exec(shellInCommand(cwd), { pty }, (err, s) => (err ? reject(err) : resolve(s))))
+        return new Promise((resolve, reject) => client.shell(pty, (err, s) => (err ? reject(err) : resolve(s))))
+      }
       let command: string
       const list = await this.listOn(client)
       if (!list.installed) throw new Error('The program “screen” is not installed on this server')

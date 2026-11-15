@@ -316,7 +316,9 @@ export function registerIpc(ctx: IpcContext): void {
     z.object({ dockerLogs: containerId }).strict(),
     z.object({ dockerShell: containerId }).strict()
   ])
-  handle('term:open', z.tuple([id, cols, rows, screenTarget.optional()]), (hostId, c, r, screen) => ctx.terminals.open(host(hostId), c, r, screen))
+  // a folder on a server, as the server itself reported it
+  const remoteDir = z.string().min(1).max(4096).regex(/^\/[^\0\r\n]*$/)
+  handle('term:open', z.tuple([id, cols, rows, screenTarget.optional(), remoteDir.optional()]), (hostId, c, r, screen, cwd) => ctx.terminals.open(host(hostId), c, r, screen, cwd))
   handle('term:screens', z.tuple([id]), (sid) => ctx.terminals.screens(sid))
   handle('term:endScreen', z.tuple([id, screenId]), (sid, screen) => ctx.terminals.endScreen(sid, screen))
   handle('term:hasDocker', z.tuple([id]), (sid) => ctx.terminals.hasDocker(sid))
@@ -348,7 +350,8 @@ export function registerIpc(ctx: IpcContext): void {
             .object({
               hostId: id,
               kind: z.enum(['terminal', 'files', 'docker']),
-              target: z.object({ target: screenTarget, name: z.string().max(200) }).strict().optional()
+              target: z.object({ target: screenTarget, name: z.string().max(200) }).strict().optional(),
+              cwd: remoteDir.optional()
             })
             .strict()
         )

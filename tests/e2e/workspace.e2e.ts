@@ -50,6 +50,8 @@ beforeAll(async () => {
   srv = await startTestSshServer()
   // What a server answers to the questions of the suggestions.
   srv.onExec = (command) => {
+    // the folder a terminal was in still exists
+    if (command.includes('__clavium_dir_ok__')) return command.includes('/srv') ? '__clavium_dir_ok__\n' : ''
     if (command.includes('__clavium_ctx__')) return '__clavium_ctx__\nbash\n/srv\n/home/tester\n'
     if (command.includes('for d in $PATH')) return 'git\ngrep\nls\ncat\n'
     if (command.includes('ls -1Ap')) return command.includes("'/srv/./'") ? 'www/\nreadme.txt\nreport 2026.txt\n' : ''
@@ -137,10 +139,13 @@ describe('workspaces and terminal suggestions', () => {
     await page.keyboard.press('Enter')
 
     // asked for with the shortcut on an empty line: the last commands, the newest first
-    await page.waitForTimeout(300)
-    await page.keyboard.press('Control+Space')
-    await list.getByRole('option').first().waitFor()
-    expect((await list.getByRole('option').allInnerTexts()).slice(0, 2)).toEqual(['cat report\\ 2026.txt', 'git checkout feature/login'])
+    // (a line is remembered once all of it has come back from the server, so the list is asked for again until then)
+    await expect
+      .poll(async () => {
+        await page.keyboard.press('Control+Space')
+        return (await list.getByRole('option').allInnerTexts()).slice(0, 2)
+      })
+      .toEqual(['cat report\\ 2026.txt', 'git checkout feature/login'])
     await page.keyboard.press('Tab')
     await expect.poll(async () => (await panes().locator('.xterm-rows').innerText()).trimEnd().endsWith('$ cat report\\ 2026.txt')).toBe(true)
     await page.keyboard.press('Control+c')
@@ -219,6 +224,18 @@ describe('workspaces and terminal suggestions', () => {
   })
 
   it('saves the tab as a workspace and opens it again from the library', async () => {
+    // The folder of a shell is asked for a moment after a line was sent. It is part of what is
+    // saved, so wait until the app knows it for the first terminal.
+    await expect
+      .poll(
+        () =>
+          page.evaluate(async () => {
+            const bridge = (globalThis as unknown as { clavium: { invoke(channel: string): Promise<{ tabs: { panes: { cwd?: string }[] }[] } | null> } }).clavium
+            return (await bridge.invoke('session:get'))?.tabs[0]?.panes[0]?.cwd
+          }),
+        { timeout: 15000 }
+      )
+      .toBe('/srv')
     await panes().nth(0).getByRole('button', { name: 'Split View and Workspace' }).click()
     await page.locator('.menu button', { hasText: 'Save Workspace…' }).click()
     await page.getByRole('dialog').getByLabel('Name of the workspace').fill('Shop production')
@@ -257,6 +274,8 @@ describe('workspaces and terminal suggestions', () => {
     await panes().getByRole('button', { name: /Leave Focus Mode/ }).click()
     await expect.poll(() => panes().count()).toBe(3)
     expect(await page.getByRole('separator', { name: 'Resize the panes left and right' }).getAttribute('aria-valuenow')).toBe('54')
+    // the first terminal starts again in the folder its shell was in
+    await terminal(panes().nth(0), '(in /srv)').waitFor()
 
     // closing a pane gives its room to the others; the last one closes the tab
     await panes().nth(0).getByRole('button', { name: 'Close Session' }).click()

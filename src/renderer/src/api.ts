@@ -109,7 +109,7 @@ export const api = {
     snippets: () => call<McpSnippets>('mcp:snippets')
   },
   term: {
-    open: (hostId: string, cols: number, rows: number, target?: TerminalTarget) => call<string>('term:open', hostId, cols, rows, target),
+    open: (hostId: string, cols: number, rows: number, target?: TerminalTarget, cwd?: string) => call<string>('term:open', hostId, cols, rows, target, cwd),
     hasDocker: (id: string) => call<boolean>('term:hasDocker', id),
     screens: (id: string) => call<ScreenList>('term:screens', id),
     endScreen: (id: string, screenId: string) => call<void>('term:endScreen', id, screenId),

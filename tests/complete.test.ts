@@ -1,10 +1,10 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { completionNeeds, escapePath, keystrokes, parseHistory, parseLine, parseNames, suggest, type CompletionData } from '../src/shared/complete'
-import { CONTEXT_COMMAND, HISTORY_COMMAND, listCommand, parseContext, parseList } from '../src/main/core/completion'
+import { CONTEXT_COMMAND, DIR_OK, HISTORY_COMMAND, enterCheckCommand, listCommand, parseContext, parseList, shellInCommand } from '../src/main/core/completion'
 
 const data = (over: Partial<CompletionData> = {}): CompletionData => ({ history: [], dir: () => undefined, dynamic: () => undefined, ...over })
 const labels = (input: string, d: CompletionData = data(), cwd = '/srv'): string[] => suggest(parseLine(input), d, cwd).map((s) => s.label)
@@ -135,6 +135,19 @@ describe('suggestions', () => {
   })
 })
 
+describe('a terminal that starts where it was', () => {
+  it('quotes the folder into the commands and never pastes it in', () => {
+    const dir = "/srv/it's; reboot"
+    for (const command of [enterCheckCommand(dir), shellInCommand(dir)]) {
+      // the whole script is one quoted word for sh -c, and the folder one quoted word inside it
+      expect(command.startsWith("sh -c '")).toBe(true)
+      expect(command).toContain('cd -- ')
+      expect(command).not.toContain(dir)
+    }
+    expect(shellInCommand('/srv')).toContain('exec "${SHELL:-/bin/sh}" -l')
+  })
+})
+
 describe('lists from the server', () => {
   it('reads bash, zsh and fish history, newest first, without lines that would run by themselves', () => {
     const text = ['#1700000000', 'ls -la', ': 1700000001:0;git status', '- cmd: docker ps', '  when: 1700000002', 'ls -la', 'evil\x1b[A', 'x'.repeat(600)].join('\n')
@@ -230,6 +243,26 @@ describe.skipIf(process.platform === 'win32')('commands that fetch the lists', (
       expect(context.busy).toBe(false)
       // macOS reaches the temporary folder through /private
       expect(context.cwd.replace(/^\/private/, '')).toBe(root.replace(/^\/private/, ''))
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('starts a shell in a folder, whatever the name of the folder tries', () => {
+    const root = mkdtempSync(join(tmpdir(), 'clavium-complete-'))
+    try {
+      const nasty = join(root, `it's $(touch ${root}/pwned); "x"`)
+      mkdirSync(nasty)
+      expect(run(enterCheckCommand(nasty)).trim()).toBe(DIR_OK)
+      expect(run(enterCheckCommand(join(root, 'missing')) + '; true')).toBe('')
+      // the shell that is started reads what to do from its input, like a terminal would type it
+      const shell = (dir: string): string => execFileSync('/bin/sh', ['-c', shellInCommand(dir)], { encoding: 'utf8', input: 'pwd\n', env: { ...process.env, SHELL: '/bin/sh', HOME: root } })
+      // (a profile of the system may print something first; the answer of pwd is the last line)
+      const last = (text: string): string => text.trim().split('\n').pop() ?? ''
+      expect(last(shell(nasty)).replace(/^\/private/, '')).toBe(nasty.replace(/^\/private/, ''))
+      // a folder that is gone in the meantime: the shell still starts, somewhere else
+      expect(last(shell(join(root, 'missing')))).toMatch(/^\//)
+      expect(readdirSync(root)).not.toContain('pwned')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

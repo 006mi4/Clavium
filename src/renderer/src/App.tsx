@@ -29,6 +29,8 @@ interface Session {
   target?: { target: TerminalTarget; name: string }
   /** files with unsaved changes in this session's editor */
   unsaved: number
+  /** a terminal: the folder its shell is in, as far as known */
+  cwd?: string
 }
 
 /** An entry under "Open": one connection, or several side by side. */
@@ -154,7 +156,7 @@ export function App() {
     const made: (Session | null)[] = saved.panes.map((p) => {
       const host = hostsRef.current.find((h) => h.id === p.hostId)
       if (!host || (p.kind !== 'files' && host.protocol !== 'ssh')) return null
-      return { id: `${p.kind}-${host.id}-${Date.now()}-${nextId++}`, kind: p.kind, host, state: 'connecting', unsaved: 0, target: p.target }
+      return { id: `${p.kind}-${host.id}-${Date.now()}-${nextId++}`, kind: p.kind, host, state: 'connecting', unsaved: 0, target: p.target, cwd: p.kind === 'terminal' && !p.target ? p.cwd : undefined }
     })
     const layout = filterLayout(
       mapLayout(saved.layout, (i) => made[i]?.id ?? ''),
@@ -183,7 +185,7 @@ export function App() {
     return {
       name: tab.name,
       workspaceId: tab.workspaceId,
-      panes: (list as Session[]).map((s) => ({ hostId: s.host.id, kind: s.kind, ...(s.target ? { target: s.target } : {}) })),
+      panes: (list as Session[]).map((s) => ({ hostId: s.host.id, kind: s.kind, ...(s.target ? { target: s.target } : {}), ...(s.kind === 'terminal' && !s.target && s.cwd ? { cwd: s.cwd } : {}) })),
       layout: mapLayout(tab.layout, (id) => ids.indexOf(id)),
       focus: Math.max(0, ids.indexOf(tab.focus)),
       zoomed: tab.zoomed
@@ -355,7 +357,7 @@ export function App() {
     if (!settings?.restoreSession) return { tabs: [], active: -1 }
     const kept = tabs.map((t) => ({ id: t.id, saved: describe(t) })).filter((x): x is { id: string; saved: WorkspaceTab } => x.saved !== null)
     return { tabs: kept.map((x) => x.saved), active: kept.findIndex((x) => x.id === active) }
-  }, [tabs, sessions.map((s) => s.id).join(), active, settings?.restoreSession])
+  }, [tabs, sessions.map((s) => `${s.id}\n${s.cwd ?? ''}`).join('\n'), active, settings?.restoreSession])
   useEffect(() => {
     if (vault !== 'unlocked' || !restored) return
     const text = JSON.stringify(snapshot)
@@ -369,6 +371,7 @@ export function App() {
 
   const setUnsaved = (id: string, unsaved: number): void =>
     setSessions((list) => list.map((x) => (x.id === id && x.unsaved !== unsaved ? { ...x, unsaved } : x)))
+  const setCwd = (id: string, cwd: string): void => setSessions((list) => list.map((x) => (x.id === id && x.cwd !== cwd ? { ...x, cwd } : x)))
   const setSessionState = (id: string, state: ConnState): void =>
     setSessions((list) => list.map((x) => (x.id === id && x.state !== state ? { ...x, state } : x)))
 
@@ -623,6 +626,8 @@ export function App() {
                     autocomplete={settings.terminalAutocomplete}
                     onState={(st) => setSessionState(s.id, st)}
                     target={s.target}
+                    startDir={s.cwd}
+                    onCwd={(cwd) => setCwd(s.id, cwd)}
                     onOpenFiles={() => open('files', s.host)}
                     onOpenScreen={(screen) => open('terminal', s.host, true, screen)}
                     onOpenDocker={() => open('docker', s.host)}

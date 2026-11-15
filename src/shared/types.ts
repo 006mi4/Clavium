@@ -661,6 +661,8 @@ export interface WorkspacePane {
   kind: PaneKind
   /** a terminal that shows a screen, a container log or a shell in a container */
   target?: { target: TerminalTarget; name: string }
+  /** the folder a terminal was in, so that it can start there again */
+  cwd?: string
 }
 
 /** The arrangement of the panes; the leaves are indexes into `panes`. */
