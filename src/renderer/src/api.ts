@@ -5,6 +5,7 @@ import type {
   AuditEntry,
   ClipboardCopyResult,
   DockerAction,
+  DockerCreateSpec,
   DockerDetails,
   DockerImage,
   DockerOverview,
@@ -103,6 +104,8 @@ export const api = {
     action: (id: string, action: DockerAction, containers: string[]) => call<void>('docker:action', id, action, containers),
     restartPolicy: (id: string, container: string, policy: DockerRestartPolicy) => call<void>('docker:restartPolicy', id, container, policy),
     removeImage: (id: string, image: string) => call<void>('docker:removeImage', id, image),
+    pull: (id: string, image: string) => call<void>('docker:pull', id, image),
+    create: (id: string, spec: DockerCreateSpec) => call<string>('docker:create', id, spec),
     close: (id: string) => call<void>('docker:close', id)
   },
   files: {

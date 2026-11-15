@@ -1,4 +1,5 @@
-import type { DockerContainer, DockerDetails, DockerImage, DockerOverview, DockerStats } from '@shared/types'
+import type { DockerContainer, DockerCreateSpec, DockerDetails, DockerImage, DockerOverview, DockerStats } from '@shared/types'
+import { shellQuote } from './screens'
 
 /**
  * Docker on a server, driven through the `docker` command line over SSH. This file only builds
@@ -55,9 +56,23 @@ export function removeImageCommand(id: string): string {
 export function logsCommand(id: string): string {
   return `docker logs --tail 1000 -f ${dockerId(id)}`
 }
+/** The last lines of a container's log, both its output and its error output. */
+export function tailLogsCommand(id: string, lines: number): string {
+  return `docker logs --tail ${Math.max(1, Math.min(5000, Math.floor(lines)))} ${dockerId(id)} 2>&1`
+}
 /** A shell inside a container: bash where the image has it, sh otherwise. */
 export function shellCommand(id: string): string {
   return `docker exec -it ${dockerId(id)} sh -c 'command -v bash >/dev/null 2>&1 && exec bash || exec sh'`
+}
+
+/**
+ * The sentence that explains why a docker command failed. Docker often adds hints after it
+ * ("Run 'docker run --help' for more information"), so the last line is not the right one.
+ */
+export function dockerError(stderr: string): string {
+  const lines = stderr.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+  const line = lines.find((l) => /Error response from daemon/i.test(l)) ?? lines.find((l) => /^(docker: |error)/i.test(l)) ?? lines.pop() ?? ''
+  return line.replace(/^(docker: )?(Error response from daemon:\s*)?/i, '').slice(0, 400) || 'The Docker command failed'
 }
 
 function jsonLines(output: string): Record<string, unknown>[] {
@@ -167,4 +182,82 @@ export function parseInspect(output: string): DockerDetails {
     networks: Object.entries(networks).map(([name, n]) => ({ name, ip: text((n as Record<string, unknown>).IPAddress) })),
     workingDir: text(data?.Config?.Labels?.['com.docker.compose.project.working_dir']) || undefined
   }
+}
+
+// ---- downloading images and creating containers --------------------------
+// Here values typed by the user do become part of a command line. Each one is checked against a
+// narrow pattern first and quoted for the shell on top of that.
+
+/** "nginx", "nginx:1.27", "ghcr.io/owner/app:v2", "registry.example.com:5000/app@sha256:…" */
+const IMAGE_REF = /^[a-z0-9]([a-z0-9._-]*[a-z0-9])?(:[0-9]+)?(\/[a-z0-9]([a-z0-9._-]*[a-z0-9])?)*(:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?(@sha256:[0-9a-f]{64})?$/
+export function imageRef(value: string): string {
+  const ref = value.trim()
+  if (ref.length > 255 || !IMAGE_REF.test(ref)) throw new Error('This is not a valid image name. Examples: nginx, nginx:1.27, ghcr.io/owner/app:v2')
+  return ref
+}
+
+export function pullCommand(image: string): string {
+  return `docker pull ${shellQuote(imageRef(image))}`
+}
+
+/**
+ * Progress of `docker pull` from the lines it has printed so far, e.g.
+ * "a1b2c3d4e5f6: Pulling fs layer", "a1b2c3d4e5f6: Pull complete", "Status: Downloaded newer image".
+ */
+export function pullProgress(lines: string[]): { done: number; total: number; status: string } {
+  const layers = new Map<string, boolean>()
+  let status = ''
+  for (const line of lines) {
+    const m = /^([0-9a-f]{12}): (.+)$/.exec(line.trim())
+    if (m) layers.set(m[1], /^(Pull complete|Already exists)/.test(m[2]) || layers.get(m[1]) === true)
+    if (line.trim()) status = line.trim()
+  }
+  return { done: [...layers.values()].filter(Boolean).length, total: layers.size, status: status.slice(0, 200) }
+}
+
+const CONTAINER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/
+
+function port(value: number): number {
+  if (!Number.isInteger(value) || value < 1 || value > 65535) throw new Error('Ports are numbers from 1 to 65535')
+  return value
+}
+/** A path for --mount: absolute, and free of the characters that separate the fields of the option. */
+function mountPath(value: string, what: string): string {
+  const path = value.trim()
+  if (!path.startsWith('/') || path.length > 1024 || /[,\0\r\n"]/.test(path)) throw new Error(`${what} must be a full path like /srv/data, without commas or quotes`)
+  return path
+}
+
+/**
+ * The command that creates a container, plus what has to be sent to its standard input.
+ * Environment variables go through standard input (`--env-file /dev/stdin`) and not through the
+ * command line, where every user of the server could read them in the process list.
+ */
+export function createCommand(spec: DockerCreateSpec): { command: string; stdin: string } {
+  const args: string[] = ['docker', spec.start ? 'run -d' : 'create']
+  if (spec.name?.trim()) {
+    if (!CONTAINER_NAME.test(spec.name.trim())) throw new Error('Use letters, digits, dots, dashes and underscores for the name')
+    args.push('--name', shellQuote(spec.name.trim()))
+  }
+  for (const p of spec.ports) {
+    if (p.protocol !== 'tcp' && p.protocol !== 'udp') throw new Error('Unknown protocol')
+    args.push('-p', `${p.localOnly ? '127.0.0.1:' : ''}${port(p.host)}:${port(p.container)}/${p.protocol}`)
+  }
+  for (const m of spec.mounts) {
+    const option = `type=bind,source=${mountPath(m.source, 'The folder on the server')},target=${mountPath(m.target, 'The path in the container')}${m.readOnly ? ',readonly' : ''}`
+    args.push('--mount', shellQuote(option))
+  }
+  if (!RESTART_POLICIES.includes(spec.restart)) throw new Error('Unknown restart policy')
+  if (spec.restart !== 'no') args.push('--restart', spec.restart)
+  const env: string[] = []
+  for (const e of spec.env) {
+    if (!ENV_NAME.test(e.name)) throw new Error(`“${e.name}” is not a valid name for a variable. Use letters, digits and underscores.`)
+    if (/[\r\n\0]/.test(e.value)) throw new Error(`The value of ${e.name} must be a single line`)
+    env.push(`${e.name}=${e.value}`)
+  }
+  if (env.length) args.push('--env-file', '/dev/stdin')
+  args.push(shellQuote(imageRef(spec.image)))
+  for (const word of (spec.command ?? '').split(/\s+/).filter(Boolean)) args.push(shellQuote(word))
+  return { command: args.join(' '), stdin: env.length ? env.join('\n') + '\n' : '' }
 }

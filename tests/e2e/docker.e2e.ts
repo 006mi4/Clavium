@@ -18,11 +18,16 @@ const root = resolve(__dirname, '../..')
 const electronPath = createRequire(import.meta.url)('electron') as unknown as string
 const WEB = 'clavium-e2e-web'
 const DB = 'clavium-e2e-db'
+const NEW = 'clavium-e2e-new'
+/** a very small image that is downloaded for the test (and deleted again, unless it was there before) */
+const SMALL = 'busybox'
+const DIR = '/tmp/clavium-e2e-dir'
 
 let app: ElectronApplication
 let page: Page
 let server: Client
 let volumes = ''
+let hadSmall = false
 const view = (): Locator => page.locator('.view:not(.hidden)')
 const row = (name: string): Locator => view().getByRole('group', { name, exact: true })
 
@@ -62,6 +67,8 @@ describe.runIf(!!target)('Docker on a real server', () => {
     const compose = '--label com.docker.compose.project=clavium-e2e'
     await remote(`docker rm -f -v ${WEB} ${DB} 2>/dev/null; docker run -d --name ${WEB} ${compose} --label com.docker.compose.service=web -p 127.0.0.1:18080:80 --entrypoint sh ${IMAGE} -c 'trap "exit 0" TERM; while true; do echo "tick $(date +%s)"; sleep 1 & wait $!; done' && docker create --name ${DB} ${compose} --label com.docker.compose.service=db --entrypoint sh ${IMAGE} -c 'trap "exit 0" TERM; sleep 3600 & wait $!'`)
     expect(await running(WEB)).toBe('true')
+    hadSmall = (await remote(`docker images -q ${SMALL}:latest`)) !== ''
+    await remote(`docker rm -f -v ${NEW} 2>/dev/null; mkdir -p ${DIR} && echo from-the-server > ${DIR}/file.txt`)
     // some images declare volumes; the ones made for these two containers are removed at the end
     volumes = await remote(`docker inspect -f '{{range .Mounts}}{{.Name}} {{end}}' ${WEB} ${DB} | tr '\n' ' '`)
 
@@ -92,7 +99,8 @@ describe.runIf(!!target)('Docker on a real server', () => {
   })
 
   afterAll(async () => {
-    await remote(`docker rm -f ${WEB} ${DB}; for v in ${volumes}; do docker volume rm $v; done`).catch(() => undefined)
+    await remote(`docker rm -f -v ${WEB} ${DB} ${NEW}; for v in ${volumes}; do docker volume rm $v; done; rm -rf ${DIR}`).catch(() => undefined)
+    if (!hadSmall) await remote(`docker rmi ${SMALL}:latest`).catch(() => undefined)
     server?.end()
     await app?.close()
   })
@@ -193,5 +201,76 @@ describe.runIf(!!target)('Docker on a real server', () => {
     const image = view().getByRole('group', { name: `${repository}:${tag}`, exact: true })
     await image.getByText('in use').waitFor()
     expect(await image.getByRole('button', { name: 'In use by a container' }).isDisabled()).toBe(true)
+  })
+
+  it('downloads an image and shows the progress', async () => {
+    await view().getByRole('button', { name: 'Download Image' }).click()
+    const sheet = page.getByRole('dialog')
+    await sheet.getByLabel('Image name').fill('Not A Valid Name')
+    expect(await sheet.getByRole('button', { name: 'Download', exact: true }).isDisabled()).toBe(true)
+    await sheet.getByLabel('Image name').fill(SMALL)
+    await sheet.getByRole('button', { name: 'Download', exact: true }).click()
+    await page.getByText(`Downloaded “${SMALL}”.`).waitFor({ timeout: 180_000 })
+    expect(await remote(`docker images -q ${SMALL}:latest`)).not.toBe('')
+    await view().getByLabel('Filter').fill(SMALL)
+    await view().getByRole('group', { name: `${SMALL}:latest`, exact: true }).waitFor()
+  })
+
+  it('creates a container with ports, a folder and settings, exactly as entered', async () => {
+    const greeting = String.raw`hello $HOME 'single' "double" \n; rm -rf /data`
+    await view().getByRole('button', { name: 'New Container' }).click()
+    const sheet = page.getByRole('dialog')
+    await sheet.getByRole('combobox', { name: 'Image' }).selectOption(`${SMALL}:latest`)
+    await sheet.getByLabel('Name', { exact: true }).fill(NEW)
+    await sheet.getByRole('button', { name: 'Add Port' }).click()
+    await sheet.getByLabel('Port on the server').fill('18081')
+    await sheet.getByLabel('Port in the container').fill('99999')
+    await sheet.getByText('Ports are numbers from 1 to 65535.').waitFor()
+    expect(await sheet.getByRole('button', { name: 'Create and Start' }).isDisabled()).toBe(true)
+    await sheet.getByLabel('Port in the container').fill('80')
+    await sheet.getByLabel('Reachable from').selectOption('local')
+    await sheet.getByRole('button', { name: 'Add Folder' }).click()
+    await sheet.getByLabel('Folder on the server').fill(DIR)
+    await sheet.getByLabel('Path in the container').fill('/data')
+    await sheet.getByText('Read only').click()
+    await sheet.getByRole('button', { name: 'Add Variable' }).click()
+    await sheet.getByLabel('Name of the variable').fill('GREETING')
+    await sheet.getByLabel('Value of the variable').fill(greeting)
+    await sheet.getByLabel('Command', { exact: true }).fill('sleep 3600')
+    if (process.env.DOCKER_SHOT) await page.screenshot({ path: process.env.DOCKER_SHOT.replace('.png', '-new.png') })
+    await sheet.getByRole('button', { name: 'Create and Start' }).click()
+    await page.getByText(`Created and started “${NEW}”.`).waitFor()
+
+    expect(await running(NEW)).toBe('true')
+    await row(NEW).getByText('18081 → 80').waitFor()
+    // the value arrived unchanged: nothing in it was run or expanded on the server
+    expect(await remote(`docker exec ${NEW} printenv GREETING`)).toBe(greeting)
+    expect(await remote(`docker inspect -f '{{json .HostConfig.PortBindings}}' ${NEW}`)).toBe('{"80/tcp":[{"HostIp":"127.0.0.1","HostPort":"18081"}]}')
+    expect(await remote(`docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' ${NEW}`)).toBe('unless-stopped')
+    expect(await remote(`docker exec ${NEW} cat /data/file.txt`)).toBe('from-the-server')
+    expect(await remote(`docker exec ${NEW} touch /data/new 2>&1`)).toMatch(/Read-only/)
+    // it is not part of the command line, where other users of the server could read it
+    expect(await remote(`docker inspect -f '{{.Config.Cmd}}' ${NEW}`)).toBe('[sleep 3600]')
+
+    // a second container with the same name: Docker's explanation is shown, nothing else happens
+    await view().getByRole('button', { name: 'New Container' }).click()
+    await sheet.getByRole('combobox', { name: 'Image' }).selectOption(`${SMALL}:latest`)
+    await sheet.getByLabel('Name', { exact: true }).fill(NEW)
+    await sheet.getByRole('button', { name: 'Create and Start' }).click()
+    await page.getByText(/is already in use/).waitFor()
+    await sheet.getByRole('button', { name: 'Cancel' }).click()
+  })
+
+  it('deletes an image that no container uses any more', async () => {
+    await remote(`docker rm -f ${NEW}`)
+    await view().getByRole('button', { name: 'Images' }).click()
+    await view().getByLabel('Filter').fill(SMALL)
+    await view().getByRole('button', { name: 'Reload' }).click()
+    const image = view().getByRole('group', { name: `${SMALL}:latest`, exact: true })
+    await image.getByRole('button', { name: `Delete ${SMALL}:latest` }).click()
+    await page.getByRole('button', { name: 'Delete', exact: true }).click()
+    await page.getByText(`Deleted “${SMALL}:latest”.`).waitFor()
+    expect(await remote(`docker images -q ${SMALL}:latest`)).toBe('')
+    hadSmall = true // nothing left to tidy up
   })
 })

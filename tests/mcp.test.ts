@@ -123,6 +123,41 @@ describe('MCP HTTP security', () => {
   })
 })
 
+describe('MCP tools for screens and Docker', () => {
+  it('need full access, also for looking, and never reach hosts that are not shared', async () => {
+    const c = await client()
+    for (const [name, args] of [
+      ['screen_list', {}],
+      ['screen_read', { screen: 'minecraft' }],
+      ['screen_send', { screen: 'minecraft', text: 'stop' }],
+      ['docker_list', {}],
+      ['docker_logs', { container: 'web' }],
+      ['docker_container_action', { container: 'web', action: 'stop' }]
+    ] as const) {
+      const readOnly = await c.callTool({ name, arguments: { host: 'readonly-box', ...args } })
+      expect(readOnly.isError, name).toBe(true)
+      expect(textOf(readOnly), name).toMatch(/read-only/)
+      const hidden = await c.callTool({ name, arguments: { host: 'secret-box', ...args } })
+      expect(textOf(hidden), name).toMatch(/Unknown host/)
+    }
+    expect(prompter.confirmCalls).toHaveLength(0) // nothing was even asked
+    await c.close()
+  })
+
+  it('ask the user before anything is typed into a screen or a container is stopped', async () => {
+    const c = await client()
+    prompter.allow = false
+    expect(textOf(await c.callTool({ name: 'screen_send', arguments: { host: 'test-box', screen: 'minecraft', text: 'stop' } }))).toMatch(/denied/)
+    expect(textOf(await c.callTool({ name: 'docker_container_action', arguments: { host: 'test-box', container: 'web', action: 'stop' } }))).toMatch(/denied/)
+    expect(prompter.confirmCalls.map((x) => x.tool)).toEqual(['screen_send', 'docker_container_action'])
+    expect(prompter.confirmCalls[0].detail).toBe('stop')
+    // removing containers is not among the actions an AI client may ask for
+    const r = await c.callTool({ name: 'docker_container_action', arguments: { host: 'test-box', container: 'web', action: 'remove' } }).catch((e: Error) => e)
+    expect(JSON.stringify(r instanceof Error ? r.message : r)).toMatch(/Invalid|invalid/)
+    await c.close()
+  })
+})
+
 describe('MCP tools', () => {
   it('lists only hosts shared with AI', async () => {
     const c = await client()
@@ -130,6 +165,9 @@ describe('MCP tools', () => {
     expect(tools.tools.map((t) => t.name).sort()).toEqual(
       [
         'delete_path',
+        'docker_container_action',
+        'docker_list',
+        'docker_logs',
         'editor_edit_file',
         'editor_list_open_files',
         'editor_open_file',
@@ -141,6 +179,9 @@ describe('MCP tools', () => {
         'read_file',
         'rename_path',
         'run_command',
+        'screen_list',
+        'screen_read',
+        'screen_send',
         'write_file'
       ].sort()
     )
@@ -271,7 +312,7 @@ describe('MCP tools', () => {
     // stdout must contain nothing but JSON-RPC lines
     const msgs = out.split('\n').filter(Boolean).map((l) => JSON.parse(l))
     expect(msgs.find((m) => m.id === 1).result.serverInfo.name).toBe('clavium')
-    expect(msgs.find((m) => m.id === 2).result.tools.length).toBe(13)
+    expect(msgs.find((m) => m.id === 2).result.tools.length).toBe(19)
     expect(JSON.stringify(msgs.find((m) => m.id === 'call-3'))).toContain('ran: echo bridged')
 
     // wrong token: the 401 reply is mapped back onto the request id

@@ -364,6 +364,17 @@ select.field option { background: var(--bg-elevated); color: var(--text); }
 .docker-row .usage { width: 150px; display: flex; justify-content: flex-end; gap: 12px; color: var(--text-2); font-size: 12px; font-variant-numeric: tabular-nums; flex-shrink: 0; }
 .docker-row .usage span:first-child { width: 52px; text-align: right; }
 .docker-row .side { gap: 0; }
+.docker-pull { display: flex; align-items: center; gap: 12px; padding: 10px 14px; margin-bottom: 16px; border-radius: var(--r-group); background: var(--bg-group); border: 1px solid var(--line); }
+.docker-pull .body { flex: 1; min-width: 0; }
+.docker-pull .primary { font-weight: 500; }
+.docker-pull .secondary { color: var(--text-2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.docker-pull .bar { width: 160px; margin: 0; flex-shrink: 0; }
+.docker-pull .bar > div { height: 100%; background: var(--accent); transition: width 0.3s; }
+.form-line { gap: 8px; }
+.form-line .arrow { color: var(--text-3); flex-shrink: 0; }
+.form-line .fill { flex: 1; }
+.form-line .check { display: flex; align-items: center; gap: 5px; color: var(--text-2); font-size: 12px; white-space: nowrap; }
+.form-problem { margin-right: auto; color: var(--red); font-size: 12px; }
 .spinner.tiny { width: 12px; height: 12px; border-width: 2px; margin: 0 -2.5px; flex-shrink: 0; }
 .table th .sort { display: inline-flex; align-items: center; gap: 4px; border: none; background: none; padding: 2px 4px; margin: -2px -4px; border-radius: 5px; font: inherit; color: inherit; cursor: default; }
 .table th .sort:hover { background: var(--fill-hover); color: var(--text); }

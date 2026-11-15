@@ -71,7 +71,28 @@ Non-secret preferences live in `settings.json`; the AI activity log in `audit.lo
 - Removing a container needs a confirmation and is refused by Docker while the container runs (no `-f`).
   Deleting an image needs a confirmation and is not offered for images in use.
 - Details of a container are shown without its environment variables, which often contain passwords.
-- AI clients (MCP) have no Docker tools.
+- Downloading an image and creating a container are the two places where typed text reaches a command
+  line. Image names, container names, ports, folders and the restart setting are each checked against a
+  narrow pattern and quoted for the shell as well. Folders are passed with `--mount`, and paths containing
+  a comma or a quote are refused, so a path cannot add options of its own. The words of an optional
+  command are quoted one by one.
+- Environment variables of a new container are sent to Docker through standard input (`--env-file
+  /dev/stdin`). They never appear in the command line, where other users of the server could read them
+  in the process list.
+- A container is only created from an image that is already on the server; nothing is downloaded as a
+  side effect.
+
+### Screens and Docker for AI clients (MCP)
+
+- All six tools need full access to the host, also the ones that only read. "Read files" keeps meaning
+  files only.
+- They follow the host's confirmation setting like every other tool: typing into a screen and starting,
+  stopping or restarting a container count as changes.
+- The tools run commands that Clavium builds. A screen or container is looked up in the list the server
+  returns, and the command uses the id from that list. An AI client cannot create or remove containers,
+  download or delete images, or end a screen with these tools.
+- Text for a screen must be a single line without control characters. The characters that have a special
+  meaning for screen (`\`, `^`, `$`) are escaped, so the program receives exactly the given text.
 
 ### File transfers, drag and drop, clipboard
 

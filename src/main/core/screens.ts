@@ -61,6 +61,30 @@ export function historyCommand(id: string): string {
   ].join('; ')
 }
 
+/** The last lines a screen has printed, as plain text. Changes nothing in the screen. */
+export function readCommand(id: string, lines: number): string {
+  const s = shellQuote(id)
+  const n = Math.max(1, Math.min(HISTORY_LINES, Math.floor(lines)))
+  return [
+    `f=$(mktemp) || exit 1`,
+    `screen -S ${s} -X hardcopy -h "$f" >/dev/null 2>&1`,
+    `i=0; while [ ! -s "$f" ] && [ $i -lt 10 ]; do sleep 0.1; i=$((i+1)); done`,
+    // drop the empty lines below the last output, then keep the last n
+    `sed -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}' "$f" | tail -n ${n}; rm -f "$f"`
+  ].join('; ')
+}
+
+/**
+ * Type one line into the program that runs in a screen and press Enter.
+ * Screen gives a meaning to \, ^ and $ in such text; they are escaped so that the program receives
+ * exactly what was passed in.
+ */
+export function sendCommand(id: string, line: string): string {
+  if (/[\x00-\x1f\x7f]/.test(line)) throw new Error('The text must be a single line without control characters')
+  const literal = line.replace(/[\\^$]/g, (c) => '\\' + c)
+  return `screen -S ${shellQuote(id)} -p 0 -X stuff ${shellQuote(literal + '\\n')}`
+}
+
 /** Text of the first lines screen drew after it last cleared the terminal, without escape codes. */
 function firstDrawnLines(drawn: string, count: number): string[] {
   const cleared = Math.max(drawn.lastIndexOf('\x1b[2J'), drawn.lastIndexOf('\x1b[J'))

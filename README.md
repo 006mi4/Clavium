@@ -31,7 +31,9 @@
 - **Docker overview**: when a server has Docker, the terminal offers a page for it. It lists all containers,
   grouped by Compose project, with status, ports, processor and memory use. Start, stop, restart, pause and
   remove containers with one click, or a whole project at once. Open the log of a container or a shell inside
-  it as a tab, set whether a container starts again by itself, and see and delete images.
+  it as a tab, set whether a container starts again by itself, and see and delete images. Download images
+  with a progress display, and create containers with a form for ports, folders and settings instead of a
+  long command line.
 - **File manager for SFTP and FTP(S)** that works the way Explorer does:
   - drag files and whole folders from Windows into the window to upload them, onto a folder to upload into it
   - drag files and folders out of the window onto the desktop or into an Explorer window to download them
@@ -221,6 +223,12 @@ tools to work; keep it in the tray.
 | `editor_open_file` | read | open a remote file in your editor |
 | `editor_read_file` | read | text of an open file, including your unsaved changes |
 | `editor_edit_file` | full | change the text **in the editor only**; you review it there and save it yourself |
+| `screen_list` | full | the GNU screen sessions of the logged-in user |
+| `screen_read` | full | the last lines a screen has printed, e.g. the console of a game server |
+| `screen_send` | full | type one line into the program in a screen and press Enter |
+| `docker_list` | full | Docker containers with image, state, ports and Compose project |
+| `docker_logs` | full | the last lines of a container's log |
+| `docker_container_action` | full | start, stop or restart a container (no creating, no removing) |
 
 The editor tools let an assistant work with you instead of behind your back: it can show you a file and
 propose a change in the editor, where the change is marked as made by an AI and nothing reaches the server
@@ -264,6 +272,8 @@ npm test           # unit + integration tests (local SSH/SFTP test server, MCP, 
 #   CLAVIUM_SCREEN_TEST=user@host:22 CLAVIUM_SCREEN_KEY=~/.ssh/id_ed25519 npx vitest run -c vitest.e2e.config.mts tests/e2e/screen.e2e.ts
 # optional, needs a server with Docker, key login and an image with `sh` on it:
 #   CLAVIUM_DOCKER_TEST=user@host:22 CLAVIUM_DOCKER_KEY=~/.ssh/id_ed25519 CLAVIUM_DOCKER_IMAGE=alpine npx vitest run -c vitest.e2e.config.mts tests/e2e/docker.e2e.ts
+# optional, the AI tools for screens and Docker against the same kind of server:
+#   CLAVIUM_TOOLS_TEST=user@host:22 CLAVIUM_TOOLS_KEY=~/.ssh/id_ed25519 CLAVIUM_TOOLS_IMAGE=alpine npx vitest run -c vitest.e2e.config.mts tests/e2e/server-tools.e2e.ts
 npm run test:e2e   # drives the real Electron app with Playwright
 npm run dist       # build dist/Clavium-Setup-x.y.z.exe and dist/Clavium-x.y.z-portable.exe
 ```

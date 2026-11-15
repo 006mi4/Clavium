@@ -282,6 +282,21 @@ export function registerIpc(ctx: IpcContext): void {
   handle('docker:action', z.tuple([id, z.enum(CONTAINER_ACTIONS), z.array(containerId).min(1).max(200)]), (did, action, ids) => ctx.docker.action(did, action, ids))
   handle('docker:restartPolicy', z.tuple([id, containerId, z.enum(RESTART_POLICIES)]), (did, c, policy) => ctx.docker.setRestartPolicy(did, c, policy))
   handle('docker:removeImage', z.tuple([id, containerId]), (did, image) => ctx.docker.removeImage(did, image))
+  const dockerPort = z.number().int().min(1).max(65535)
+  const createSpec = z
+    .object({
+      image: z.string().min(1).max(255),
+      name: z.string().max(63).optional(),
+      ports: z.array(z.object({ host: dockerPort, container: dockerPort, protocol: z.enum(['tcp', 'udp']), localOnly: z.boolean() }).strict()).max(50),
+      mounts: z.array(z.object({ source: z.string().min(1).max(1024), target: z.string().min(1).max(1024), readOnly: z.boolean() }).strict()).max(50),
+      env: z.array(z.object({ name: z.string().min(1).max(128), value: z.string().max(32 * 1024) }).strict()).max(200),
+      restart: z.enum(RESTART_POLICIES),
+      command: z.string().max(4096).optional(),
+      start: z.boolean()
+    })
+    .strict()
+  handle('docker:pull', z.tuple([id, z.string().min(1).max(255)]), (did, image) => ctx.docker.pull(did, image))
+  handle('docker:create', z.tuple([id, createSpec]), (did, spec) => ctx.docker.create(did, spec))
   handle('docker:close', z.tuple([id]), (did) => ctx.docker.close(did))
   handle('term:write', z.tuple([id, z.string().max(1024 * 1024)]), (sid, data) => ctx.terminals.write(sid, data))
   handle('term:resize', z.tuple([id, cols, rows]), (sid, c, r) => ctx.terminals.resize(sid, c, r))

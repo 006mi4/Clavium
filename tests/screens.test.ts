@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AltScreenFilter, historyCommand, parseHistory, parseScreenList, shellQuote } from '../src/main/core/screens'
+import { AltScreenFilter, historyCommand, parseHistory, parseScreenList, readCommand, sendCommand, shellQuote } from '../src/main/core/screens'
 
 describe('screen list', () => {
   it('reads the output of screen -ls, with and without dates, with spaces in names', () => {
@@ -56,5 +56,22 @@ describe('alternate screen filter', () => {
     expect(f.push('a\x1b[?1049hb\x1b[1;24r')).toBe('ab\x1b[1;24r')
     expect(f.push('c\x1b[?10') + f.push('49hd') + f.push('\x1b') + f.push('[?1049le')).toBe('cde')
     expect(f.push('\x1b[?25l\x1b[31mred\x1b[?1h')).toBe('\x1b[?25l\x1b[31mred\x1b[?1h') // everything else passes
+  })
+})
+
+describe('screen commands for AI clients', () => {
+  it('sends text literally: nothing in it is a command for the shell or for screen', () => {
+    expect(sendCommand('990.minecraft', 'say hello')).toBe(String.raw`screen -S '990.minecraft' -p 0 -X stuff 'say hello\n'`)
+    // \ ^ and $ have a meaning for screen, a quote has one for the shell
+    expect(sendCommand('1.a', String.raw`it's $HOME ^C \n`)).toBe(String.raw`screen -S '1.a' -p 0 -X stuff 'it'\''s \$HOME \^C \\n\n'`)
+    expect(() => sendCommand('1.a', 'two\nlines')).toThrow(/single line/)
+    expect(() => sendCommand('1.a', 'bell\x07')).toThrow(/single line/)
+  })
+
+  it('reads a bounded number of lines and removes its temporary file', () => {
+    const c = readCommand(`1.x'y`, 99999)
+    expect(c).toContain(String.raw`-S '1.x'\''y' -X hardcopy`)
+    expect(c).toContain('tail -n 5000')
+    expect(c).toContain('rm -f "$f"')
   })
 })

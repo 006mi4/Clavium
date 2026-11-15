@@ -196,6 +196,33 @@ export interface DockerImage {
 export type DockerRestartPolicy = 'no' | 'on-failure' | 'unless-stopped' | 'always'
 export type DockerAction = 'start' | 'stop' | 'restart' | 'pause' | 'unpause' | 'remove'
 
+/** What the "New Container" form collects. */
+export interface DockerCreateSpec {
+  /** an image that is on the server, e.g. "nginx:latest" */
+  image: string
+  name?: string
+  ports: { host: number; container: number; protocol: 'tcp' | 'udp'; /** reachable from the server itself only */ localOnly: boolean }[]
+  /** folders of the server that the container may use */
+  mounts: { source: string; target: string; readOnly: boolean }[]
+  env: { name: string; value: string }[]
+  restart: DockerRestartPolicy
+  /** replaces the command of the image; split at spaces */
+  command?: string
+  /** start it right away */
+  start: boolean
+}
+
+export interface DockerPullProgress {
+  /** the overview this download belongs to */
+  id: string
+  image: string
+  /** layers finished / layers in total, as far as Docker has announced them */
+  done: number
+  total: number
+  /** Docker's latest line */
+  status: string
+}
+
 export interface DockerDetails {
   id: string
   name: string

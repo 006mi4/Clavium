@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import {
   actionCommand,
+  createCommand,
+  dockerError,
   dockerId,
+  imageRef,
   logsCommand,
   parseImages,
   parseInspect,
   parseOverview,
   parseStats,
+  pullCommand,
+  pullProgress,
   readablePorts,
   removeImageCommand,
   restartPolicyCommand,
@@ -123,5 +128,75 @@ describe('docker commands', () => {
     expect(() => actionCommand('start', [])).toThrow(/No container/)
     expect(() => restartPolicyCommand(A, 'always; reboot' as RestartPolicy)).toThrow(/Unknown restart policy/)
     expect(() => actionCommand('exec' as ContainerAction, [A])).toThrow(/Unknown action/)
+  })
+})
+
+describe('downloading images and creating containers', () => {
+  it('accepts image names and nothing else', () => {
+    for (const ok of ['nginx', 'nginx:1.27', 'library/postgres:17-alpine', 'ghcr.io/owner/app:v2', 'registry.example.com:5000/team/app', 'app@sha256:' + A]) expect(imageRef(ok)).toBe(ok)
+    expect(pullCommand(' nginx:1.27 ')).toBe(`docker pull 'nginx:1.27'`)
+    for (const bad of ['', 'Nginx', 'nginx; reboot', 'nginx $(reboot)', '-v /:/host alpine', 'a b', `x'y`, '../x', 'nginx:', ':latest']) expect(() => imageRef(bad), bad).toThrow(/not a valid image name/)
+  })
+
+  it('reads the progress of a download from what Docker prints', () => {
+    const lines = ['17-alpine: Pulling from library/postgres', 'aaaaaaaaaaaa: Already exists', 'bbbbbbbbbbbb: Pulling fs layer', 'cccccccccccc: Pulling fs layer', 'bbbbbbbbbbbb: Download complete', 'bbbbbbbbbbbb: Pull complete']
+    expect(pullProgress(lines)).toEqual({ done: 2, total: 3, status: 'bbbbbbbbbbbb: Pull complete' })
+    expect(pullProgress([])).toEqual({ done: 0, total: 0, status: '' })
+  })
+
+  const spec = { image: 'nginx:1.27', ports: [], mounts: [], env: [], restart: 'no' as const, start: true }
+
+  it('builds the command from checked and quoted values; variables go through standard input', () => {
+    const r = createCommand({
+      image: 'nginx:1.27',
+      name: 'website',
+      ports: [
+        { host: 8080, container: 80, protocol: 'tcp', localOnly: false },
+        { host: 5353, container: 53, protocol: 'udp', localOnly: true }
+      ],
+      mounts: [{ source: `/srv/my site's files`, target: '/usr/share/nginx/html', readOnly: true }],
+      env: [
+        { name: 'PASSWORD', value: `s3cret $HOME 'x' "y"` },
+        { name: 'EMPTY', value: '' }
+      ],
+      restart: 'unless-stopped',
+      command: 'nginx  -g  daemon off;',
+      start: true
+    })
+    expect(r.command).toBe(
+      String.raw`docker run -d --name 'website' -p 8080:80/tcp -p 127.0.0.1:5353:53/udp --mount 'type=bind,source=/srv/my site'\''s files,target=/usr/share/nginx/html,readonly' --restart unless-stopped --env-file /dev/stdin 'nginx:1.27' 'nginx' '-g' 'daemon' 'off;'`
+    )
+    expect(r.stdin).toBe(`PASSWORD=s3cret $HOME 'x' "y"\nEMPTY=\n`)
+    expect(r.command).not.toContain('s3cret') // not readable in the process list of the server
+
+    expect(createCommand({ ...spec, start: false })).toEqual({ command: `docker create 'nginx:1.27'`, stdin: '' })
+  })
+
+  it('refuses values that could change the meaning of the command', () => {
+    const bad: [string, object][] = [
+      ['name', { name: 'a; reboot' }],
+      ['name', { name: '-rm' }],
+      ['port', { ports: [{ host: 0, container: 80, protocol: 'tcp', localOnly: false }] }],
+      ['port', { ports: [{ host: 80.5, container: 80, protocol: 'tcp', localOnly: false }] }],
+      ['protocol', { ports: [{ host: 80, container: 80, protocol: 'tcp --privileged', localOnly: false }] }],
+      ['relative folder', { mounts: [{ source: 'data', target: '/data', readOnly: false }] }],
+      ['extra mount option', { mounts: [{ source: '/srv,bind-propagation=shared', target: '/data', readOnly: false }] }],
+      ['target with comma', { mounts: [{ source: '/srv', target: '/data,readonly', readOnly: false }] }],
+      ['variable name', { env: [{ name: 'A B', value: 'x' }] }],
+      ['second variable smuggled in', { env: [{ name: 'A', value: 'x\nB=y' }] }],
+      ['restart policy', { restart: 'always --privileged' }],
+      ['image', { image: 'nginx --privileged' }]
+    ]
+    for (const [what, patch] of bad) expect(() => createCommand({ ...spec, ...patch } as never), what).toThrow()
+    // words of the command are quoted one by one: no word can become an option of docker or a second command
+    expect(createCommand({ ...spec, command: 'echo $(reboot); ls' }).command).toBe(String.raw`docker run -d 'nginx:1.27' 'echo' '$(reboot);' 'ls'`)
+  })
+
+  it('finds the sentence that explains an error', () => {
+    const conflict = `docker: Error response from daemon: Conflict. The container name "/web" is already in use by container "abc". You have to remove (or rename) that container to be able to reuse that name.\n\nRun 'docker run --help' for more information\n`
+    expect(dockerError(conflict)).toMatch(/^Conflict\. The container name "\/web" is already in use/)
+    expect(dockerError('Error response from daemon: No such container: x\n')).toBe('No such container: x')
+    expect(dockerError('something else went wrong\n')).toBe('something else went wrong')
+    expect(dockerError('')).toBe('The Docker command failed')
   })
 })

@@ -572,7 +572,7 @@ describe('Clavium desktop app', () => {
     const msgs = out.split('\n').filter(Boolean).map((l) => JSON.parse(l))
     expect(code).toBe(0)
     expect(msgs.find((m) => m.id === 1)?.result?.serverInfo?.name).toBe('clavium')
-    expect(msgs.find((m) => m.id === 2)?.result?.tools?.length).toBe(13)
+    expect(msgs.find((m) => m.id === 2)?.result?.tools?.length).toBe(19)
   })
 
   it('shows keys, known hosts and settings, then locks the vault', async () => {
