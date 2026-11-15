@@ -8,6 +8,11 @@ import type { RemoteFs } from './remotefs'
 
 /** A program writes a file in several steps; wait until it is done. */
 const SETTLE_MS = 500
+/**
+ * The system does not report every change: on a busy machine a report can get lost, above all
+ * right after the watching began (measured on macOS). So the file is also looked at this often.
+ */
+const LOOK_MS = 2000
 /** How often to look again while the program still holds the file after saving (Windows). */
 const IN_USE_RETRIES = 60
 
@@ -58,6 +63,9 @@ export class ExternalEdit {
   private dir = ''
   private watcher: FSWatcher | null = null
   private timer: NodeJS.Timeout | null = null
+  private looker: NodeJS.Timeout | null = null
+  /** the local copy as it was when it was last looked at, so one change is handled once */
+  private seen = { size: -1, mtimeMs: -1 }
   private stopped = false
   private busy = false
   private heldTries = 0
@@ -88,14 +96,24 @@ export class ExternalEdit {
       this.remote = { size: before.size, modifiedAt: before.modifiedAt }
       const st = await stat(localPath)
       this.local = { size: st.size, mtimeMs: st.mtimeMs }
+      this.seen = { ...this.local }
       // The folder is watched, not the file: many programs save by writing a new file and renaming it.
       this.watcher = watch(this.dir, () => this.schedule())
       this.watcher.on('error', () => undefined)
+      this.looker = setInterval(() => void this.look(), LOOK_MS)
+      this.looker.unref()
       await this.host.launch(localPath)
     } catch (e) {
       await this.stop()
       throw e
     }
+  }
+
+  /** Catch a change the system did not report. */
+  private async look(): Promise<void> {
+    if (this.stopped || this.timer || this.busy) return
+    const st = await stat(this.status.localPath).catch(() => null)
+    if (st?.isFile() && (st.size !== this.seen.size || st.mtimeMs !== this.seen.mtimeMs)) this.schedule()
   }
 
   private schedule(force = false): void {
@@ -115,6 +133,7 @@ export class ExternalEdit {
       const st = await stat(this.status.localPath).catch(() => null)
       // In the middle of a save the file may be gone for a moment.
       if (!st?.isFile()) return
+      this.seen = { size: st.size, mtimeMs: st.mtimeMs }
       if (!force && st.size === this.local.size && st.mtimeMs === this.local.mtimeMs) return
       // Some programs keep the file to themselves for a while after saving. Wait for them.
       if (!(await readableNow(this.status.localPath))) {
@@ -159,6 +178,7 @@ export class ExternalEdit {
   async stop(): Promise<void> {
     this.stopped = true
     if (this.timer) clearTimeout(this.timer)
+    if (this.looker) clearInterval(this.looker)
     this.watcher?.close()
     this.watcher = null
     if (this.dir) await rm(this.dir, { recursive: true, force: true }).catch(() => undefined)

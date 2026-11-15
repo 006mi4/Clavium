@@ -1,12 +1,20 @@
 import { existsSync, mkdtempSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_TRANSFER_SETTINGS, type ExternalEditStatus, type RemoteEntry } from '@shared/types'
 import { FileManager, type Desktop } from '../src/main/files'
 import { newUnlockedVault, recordingPrompter, sshHost } from './helpers/fixtures'
 import { holdFile } from './helpers/holdFile'
 import { startTestSshServer, type TestSshServer } from './helpers/testServer'
+
+// A switch that makes the system report no changes of files at all, as a busy machine sometimes does.
+const deaf = vi.hoisted(() => ({ on: false }))
+vi.mock('node:fs', async (original) => {
+  const real = await original<typeof import('node:fs')>()
+  const watch = ((...args: Parameters<typeof real.watch>) => (deaf.on ? real.watch(args[0] as string, () => undefined) : real.watch(...args))) as typeof real.watch
+  return { ...real, default: { ...real, watch }, watch }
+})
 
 let srv: TestSshServer
 const open: FileManager[] = []
@@ -89,6 +97,29 @@ describe('editing in an external editor', () => {
     writeFileSync(edit.localPath, 'a=3')
     await until(() => readFileSync(join(srv.root, 'shared.conf'), 'utf8') === 'a=3')
   })
+
+  it('uploads a saved file and notices a conflict even when the system reports no change', async () => {
+    deaf.on = true
+    try {
+      const t = await setup()
+      writeFileSync(join(srv.root, 'quiet.txt'), 'one')
+      const edit = await t.fm.externalEdit(t.id, await t.entry('/quiet.txt'))
+      writeFileSync(edit.localPath, 'two, saved without a report')
+      await until(() => readFileSync(join(srv.root, 'quiet.txt'), 'utf8') === 'two, saved without a report')
+      await until(() => t.state().uploads === 1)
+
+      writeFileSync(join(srv.root, 'quiet.txt'), 'changed by a colleague')
+      writeFileSync(edit.localPath, 'three')
+      await until(() => t.state().state === 'conflict')
+      // the conflict is reported once, not again at every look
+      const reports = t.events.length
+      await sleep(4500)
+      expect(t.events.length).toBe(reports)
+      expect(readFileSync(join(srv.root, 'quiet.txt'), 'utf8')).toBe('changed by a colleague')
+    } finally {
+      deaf.on = false
+    }
+  }, 20_000)
 
   it('stops on request and with the session, and removes the local copy', async () => {
     const t = await setup()

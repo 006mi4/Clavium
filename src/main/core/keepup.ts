@@ -9,8 +9,12 @@ import { ignoredName } from './sync'
 
 /** Changes are collected for this long, so a file that is being saved is uploaded once. */
 const SETTLE_MS = 400
-/** Right after the start the system may still report changes from before it (macOS does). */
-const WARMUP_MS = 2000
+/**
+ * Right after the start the system may still report changes from before it (macOS does, and on
+ * a busy machine seconds late). A report that arrives in this time for a file that was not
+ * touched since the start is such an old change.
+ */
+const WARMUP_MS = 5000
 /** How often a watch looks whether a lost connection is back. */
 const OFFLINE_RETRY_MS = 1500
 /** A file that another program still holds is looked at again after this time, this often. */
@@ -38,6 +42,8 @@ export class FolderWatch {
   readonly status: WatchStatus
   private watcher: FSWatcher | null = null
   private pending = new Set<string>()
+  /** paths the system reported during the warm-up: possibly changes from before the start */
+  private early = new Set<string>()
   private timer: NodeJS.Timeout | null = null
   private busy = false
   private stopped = false
@@ -78,7 +84,9 @@ export class FolderWatch {
   private note(filename: string): void {
     const parts = filename.split(sep).filter(Boolean)
     if (!parts.length || parts.some((p) => ignoredName(p) || p === '..' || /[\r\n\0]/.test(p))) return
-    this.pending.add(parts.join('/'))
+    const rel = parts.join('/')
+    if (Date.now() - this.status.startedAt < WARMUP_MS) this.early.add(rel)
+    this.pending.add(rel)
     this.schedule()
   }
 
@@ -134,8 +142,10 @@ export class FolderWatch {
         const st = await lstat(local).catch(() => null)
         // Removed here: it stays on the server.
         if (!st) continue
+        // What counts is when the report arrived, not when it is worked on: an upload before it may take long.
         const start = this.status.startedAt
-        if (Date.now() - start < WARMUP_MS && st.ctimeMs < start && st.mtimeMs < start) continue
+        const old = this.early.delete(rel) && st.ctimeMs < start && st.mtimeMs < start
+        if (old) continue
         const parent = posix.dirname(rel) === '.' ? '' : posix.dirname(rel)
         const remote = posix.join(this.status.remoteDir, rel)
         try {
