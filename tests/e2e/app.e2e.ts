@@ -589,6 +589,15 @@ describe('Clavium desktop app', () => {
     await page.keyboard.press('ArrowUp')
     expect(await selectedNames()).toEqual(['assets'])
     expect(await area.getAttribute('aria-activedescendant')).toBe(await row('assets').getAttribute('id'))
+
+    // with the mouse: Shift selects everything from the row clicked before, Ctrl or Cmd takes one row out
+    await row('assets').click()
+    await row('app.log').click({ modifiers: ['Shift'] })
+    expect(await selectedNames()).toEqual(['assets', 'app.log'])
+    await row('assets').click({ modifiers: ['ControlOrMeta'] })
+    expect(await selectedNames()).toEqual(['app.log'])
+    await row('assets').click()
+    await area.focus()
     await page.keyboard.press('Backspace')
     await row('readme.txt').waitFor()
 

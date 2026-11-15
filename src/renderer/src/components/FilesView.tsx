@@ -326,10 +326,12 @@ export function FilesView(props: {
   const selEntries = entries.filter((e) => selected.has(e.path))
 
   const clickRow = (e: MouseEvent, entry: RemoteEntry, index: number): void => {
+    // Read now: the function below may run after `lastClicked` already points at this row.
+    const anchor = lastClicked.current
     setSelected((prev) => {
       const next = new Set(mod(e) ? prev : [])
-      if (e.shiftKey && lastClicked.current >= 0) {
-        const [a, b] = [lastClicked.current, index].sort((x, y) => x - y)
+      if (e.shiftKey && anchor >= 0) {
+        const [a, b] = [anchor, index].sort((x, y) => x - y)
         entries.slice(a, b + 1).forEach((x) => next.add(x.path))
       } else if (mod(e) && prev.has(entry.path)) next.delete(entry.path)
       else next.add(entry.path)
