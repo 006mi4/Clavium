@@ -1,6 +1,6 @@
 # Terminal suggestions and workspaces
 
-State of the branch `workspaces-autocomplete` (cut from `main` at 0.1.9). Not merged, not released.
+Part of Clavium since 0.1.11.
 
 ## What is built
 
@@ -41,11 +41,24 @@ State of the branch `workspaces-autocomplete` (cut from `main` at 0.1.9). Not me
 - `npm run test:e2e`: `tests/e2e/workspace.e2e.ts` drives suggestions, split view, keyboard resizing, focus
   mode, saving and opening a workspace and the restart with restored tabs in the real app.
 
+## Checked on Windows
+
+With 0.1.11, in the built app against OpenSSH 9.6 on Ubuntu with bash:
+
+- `npm run typecheck`, `npm test` and `npm run test:e2e` pass. The unit tests that need `sh` are skipped on Windows.
+- Suggestions: folders, files with spaces and umlauts, git subcommands and branches, programs in `PATH`, insertion with
+  Tab and with the mouse. The folder of the shell is found through `/proc` and follows `cd`. Nothing is suggested inside
+  `python3` and `less`, and nothing for text typed without echo (`read -s`).
+- A shell without a UTF-8 locale drops the umlauts of an inserted name; with `LANG=C.UTF-8` the name arrives complete.
+- Split view with `Ctrl+Shift+D` and `Ctrl+Shift+E`, a file pane next to terminals, `Ctrl+Alt+Arrow`, focus mode, resizing
+  with the mouse. The caption buttons of Windows do not cover the toolbar of the pane in the top right corner.
+- A saved workspace with four panes opens again from the library, and the tabs of the last session come back after a
+  restart with the same divider position and focus mode.
+
 ## Not checked yet
 
-- A real Linux server with OpenSSH: the folder detection through `/proc`, bash and zsh with their own line
-  editors (syntax highlighting, autosuggestion plugins, right prompts), fish.
-- Windows: everything in this branch ran on macOS only. The unit tests that need `sh` are skipped there.
+- zsh with its own line editor (syntax highlighting, autosuggestion plugins, right prompts) and fish.
+- Windows: a keyboard with AltGr characters and an input method that uses Ctrl+Space, typed by hand.
 - Very small windows with three panes side by side, 200 % zoom, and a screen reader on the suggestion list
   (it announces through a polite live region; the roles are listbox and option).
 - Restoring a tab whose screen or container no longer exists shows the error of the server in that pane.
