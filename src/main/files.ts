@@ -191,6 +191,7 @@ export class FileManager {
 
   /** Close every session (vault locked, app quitting) and tell the interface about each one. */
   closeAll(): void {
+    this.queue.abandon()
     for (const id of [...this.sessions.keys()]) {
       this.close(id)
       this.send('files:closed', id)

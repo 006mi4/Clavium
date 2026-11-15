@@ -374,4 +374,32 @@ describe('transfer queue', () => {
     await upload
     expect(t.fm.transfers().counts).toMatchObject({ failed: 2, running: 0, queued: 0 })
   })
+
+  it('leaves no unfinished downloads behind when the app quits, and gives back a file it was continuing', async () => {
+    const t = await setup('sftp', { transferLimitKbps: 256, transferConcurrency: 2 })
+    const data = file(t.onServer('running.bin'), 600_000)
+    file(t.onServer('paused.bin'), 600_000)
+    file(t.onServer('continued.bin'), 600_000)
+    const down = join(t.local, 'down')
+    mkdirSync(down)
+    // half of a file from an earlier day, which the rule "resume" goes on with
+    writeFileSync(join(down, 'continued.bin'), data.subarray(0, 100_000))
+    const entry = (name: string) => t.fs.stat(`${t.dir}/${name}`)
+
+    void t.fm.download(t.id, [await entry('paused.bin')], { localDir: down })
+    const paused = (await t.until((s) => s.items.find((i) => i.state === 'running' && i.transferred > 50_000))).items[0]
+    t.fm.queueAction('pause', paused.id)
+    await t.until((s) => s.items[0].state === 'paused')
+    void t.fm.download(t.id, [await entry('running.bin')], { localDir: down })
+    void t.fm.download(t.id, [await entry('continued.bin')], { localDir: down }, 'resume')
+    await t.until((s) => s.items.filter((i) => i.state === 'running' && i.transferred > 150_000).length === 2)
+    expect(readdirSync(down).sort()).toEqual(['continued.bin', 'paused.bin', 'running.bin'].map((n) => n + PART_SUFFIX))
+
+    // quitting does not wait for anything: the folder must be clean the moment this returns
+    t.fm.closeAll()
+    expect(readdirSync(down)).toEqual(['continued.bin'])
+    expect(statSync(join(down, 'continued.bin')).size).toBeGreaterThanOrEqual(100_000)
+    await sleep(500)
+    expect(readdirSync(down)).toEqual(['continued.bin'])
+  })
 })

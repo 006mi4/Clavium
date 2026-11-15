@@ -1,3 +1,4 @@
+import { renameSync, rmSync } from 'node:fs'
 import { chmod, mkdir, readdir, rename, rm, stat, utimes } from 'node:fs/promises'
 import { basename, dirname, extname, join, posix } from 'node:path'
 import type {
@@ -784,6 +785,24 @@ export class TransferQueue {
       e.batch.listings.clear()
     }
     this.pump()
+  }
+
+  /**
+   * Everything ends now (the app quits, or the vault is locked): unfinished downloads are removed
+   * at once. Nothing can continue them later, and what is started here may no longer get to run.
+   */
+  abandon(): void {
+    for (const e of this.entries) {
+      if (e.direction !== 'download' || !e.local || e.state === 'done' || e.state === 'cancelled' || e.state === 'skipped') continue
+      try {
+        // What was there before the download continued it is given back, not deleted.
+        if (e.adopted) renameSync(e.local + PART_SUFFIX, e.local)
+        else rmSync(e.local + PART_SUFFIX, { force: true })
+        e.adopted = false
+      } catch {
+        /* nothing there, or held by another program: it stays */
+      }
+    }
   }
 
   sessionClosed(sessionId: string): void {
