@@ -98,8 +98,16 @@ beforeAll(async () => {
     service,
     settings: () => ({ ...DEFAULT_SETTINGS, mcpTokenHash: sha256Hex(TOKEN) })
   })
-  port = 40000 + Math.floor(Math.random() * 20000)
-  await http.start(port)
+  // A random port can be taken or reserved by the system (Windows answers EACCES): try another.
+  for (let attempt = 1; ; attempt++) {
+    port = 40000 + Math.floor(Math.random() * 20000)
+    try {
+      await http.start(port)
+      break
+    } catch (e) {
+      if (attempt >= 5) throw e
+    }
+  }
 })
 
 afterAll(async () => {
