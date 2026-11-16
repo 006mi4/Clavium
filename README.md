@@ -381,8 +381,9 @@ tests/              vitest tests incl. an in-process SSH/SFTP server; tests/e2e 
 
 ## Roadmap
 
-Jump hosts / ProxyJump · snippets · search in the terminal · split panes · macOS & Linux builds · German UI ·
-SFTP editing in an external editor
+Not built yet: snippets for commands you use often · search in the terminal · a Linux build · a German interface.
+
+Ideas and votes are welcome in the [issues](https://github.com/006mi4/Clavium/issues).
 
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
