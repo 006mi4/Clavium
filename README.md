@@ -26,7 +26,7 @@
   <a href="#deutsch">Deutsch</a>
 </p>
 
-![Hosts](docs/screenshots/03-hosts.png)
+![Clavium in 18 seconds: suggestions while typing in the terminal, three connections in one tab, focus mode, and the question Clavium asks before an AI runs a command](docs/demo.gif)
 
 *Clavium* comes from Latin *clavis* — "key".
 
