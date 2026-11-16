@@ -5,7 +5,8 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   resolve: { alias: { '@shared': resolve(__dirname, 'src/shared') } },
   test: {
-    include: ['tests/e2e/**/*.e2e.ts'],
+    // `npm run demo` records the animation of the README instead of running the tests
+    include: [process.argv.includes('readme.demo') ? 'tests/e2e/**/*.demo.ts' : 'tests/e2e/**/*.e2e.ts'],
     environment: 'node',
     testTimeout: 120000,
     hookTimeout: 60000,

@@ -21,6 +21,8 @@ export interface TestSshServer {
   logins: number
   /** answers commands that are run without a terminal; undefined: the default answer "ran: <command>" */
   onExec?: (command: string) => string | { out?: string; err?: string; code?: number } | undefined
+  /** what the shells print for a line that was sent; undefined: the default answer "echo:<line>" */
+  onLine?: (line: string) => string | undefined
   /** everything typed into the shells of this server, in the order it arrived */
   typed: string[]
   /** text the shells show at the right edge of every new prompt, as zsh does with RPROMPT */
@@ -108,7 +110,8 @@ export async function startTestSshServer(hostKey?: string): Promise<TestSshServe
             for (const ch of d.toString('utf8')) {
               if (ch === '\r' || ch === '\n') {
                 if (line) typed.push(line)
-                stream.write(`\r\necho:${line}\r\n${prompt()}`)
+                const answer = api.onLine?.(line) ?? `echo:${line}`
+                stream.write(`\r\n${answer.replace(/\r?\n/g, '\r\n')}\r\n${prompt()}`)
                 if (line === 'exit') {
                   stream.exit(0)
                   stream.end()
